@@ -1,0 +1,11 @@
+{
+  "name": "telegram-rating-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for rating profiles",
+  "main": "bot.js",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "pg": "^8.10.0",
+    "telegraf": "^4.12.2"
+  }
+}
