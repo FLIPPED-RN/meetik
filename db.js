@@ -18,7 +18,9 @@ const initDb = async () => {
                 coins INTEGER DEFAULT 0,
                 average_rating DECIMAL(4,2) DEFAULT 0,
                 last_win_time TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                in_global_rating BOOLEAN DEFAULT false,
+                last_global_win TIMESTAMP
             );
 
             CREATE TABLE IF NOT EXISTS photos (
@@ -358,6 +360,72 @@ const db = {
             [userId]
         );
         return parseInt(result.rows[0].wins) || 0;
+    },
+
+    joinGlobalRating: async (userId) => {
+        const result = await pool.query(`
+            UPDATE users 
+            SET in_global_rating = true,
+                coins = coins - 50
+            WHERE user_id = $1 
+            AND coins >= 50
+            RETURNING *
+        `, [userId]);
+        return result.rows[0];
+    },
+
+    getGlobalRatingProfiles: async (userId) => {
+        const result = await pool.query(`
+            SELECT u.*, array_agg(p.photo_id) as photos
+            FROM users u
+            LEFT JOIN photos p ON u.user_id = p.user_id
+            WHERE u.in_global_rating = true
+            AND u.user_id != $1
+            GROUP BY u.user_id
+        `, [userId]);
+        return result.rows;
+    },
+
+    updateGlobalWinner: async () => {
+        try {
+            await pool.query('BEGIN');
+
+            // Находим победителя
+            const winner = await pool.query(`
+                SELECT user_id, average_rating
+                FROM users
+                WHERE in_global_rating = true
+                ORDER BY average_rating DESC
+                LIMIT 1
+            `);
+
+            if (winner.rows.length > 0) {
+                const winnerId = winner.rows[0].user_id;
+
+                // Начисляем награду и сбрасываем рейтинг
+                await pool.query(`
+                    UPDATE users
+                    SET coins = coins + 500,
+                        average_rating = 0,
+                        in_global_rating = false,
+                        last_global_win = CURRENT_TIMESTAMP
+                    WHERE user_id = $1
+                `, [winnerId]);
+
+                // Сбрасываем флаг участия у всех остальных
+                await pool.query(`
+                    UPDATE users
+                    SET in_global_rating = false
+                    WHERE user_id != $1
+                `, [winnerId]);
+            }
+
+            await pool.query('COMMIT');
+            return winner.rows[0];
+        } catch (error) {
+            await pool.query('ROLLBACK');
+            throw error;
+        }
     }
 };
 
