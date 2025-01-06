@@ -36,7 +36,8 @@ const initDb = async () => {
                 from_user_id BIGINT REFERENCES users(user_id),
                 to_user_id BIGINT REFERENCES users(user_id),
                 rating INTEGER CHECK (rating >= 1 AND rating <= 10),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_skip BOOLEAN DEFAULT false
             );
 
             CREATE TABLE IF NOT EXISTS winners (
@@ -59,6 +60,7 @@ const initDb = async () => {
             CREATE TABLE IF NOT EXISTS global_rounds (
                 id SERIAL PRIMARY KEY,
                 start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                registration_end_time TIMESTAMP,
                 rating_end_time TIMESTAMP,
                 voting_end_time TIMESTAMP,
                 is_active BOOLEAN DEFAULT true
@@ -266,13 +268,13 @@ const db = {
             )
             AND (
                 u.last_win_time IS NULL 
-                OR u.last_win_time < NOW() - INTERVAL '20 seconds'
+                OR u.last_win_time < NOW() - INTERVAL '1 hour'
             )
             AND NOT EXISTS (
                 SELECT 1 FROM ratings r
                 WHERE r.from_user_id = $1 
                 AND r.to_user_id = u.user_id
-                AND r.created_at > NOW() - INTERVAL '20 seconds'
+                AND r.created_at > NOW() - INTERVAL '1 hour'
             )
             GROUP BY u.user_id
             LIMIT 10
@@ -289,13 +291,13 @@ const db = {
             WHERE u.user_id != $1
             AND (
                 u.last_win_time IS NULL 
-                OR u.last_win_time < NOW() - INTERVAL '20 seconds'
+                OR u.last_win_time < NOW() - INTERVAL '1 hour'
             )
             AND NOT EXISTS (
                 SELECT 1 FROM ratings r
                 WHERE r.from_user_id = $1 
                 AND r.to_user_id = u.user_id
-                AND r.created_at > NOW() - INTERVAL '20 seconds'
+                AND (r.created_at > NOW() - INTERVAL '1 hour' OR r.is_skip = true)
             )
             GROUP BY u.user_id
             LIMIT 1
@@ -647,6 +649,42 @@ const db = {
             LIMIT 5
         `, [userId]);
         return result.rows;
+    },
+
+    saveSkip: async (fromUserId, toUserId) => {
+        try {
+            await pool.query(`
+                INSERT INTO ratings (from_user_id, to_user_id, rating, is_skip)
+                VALUES ($1, $2, 0, true)
+            `, [fromUserId, toUserId]);
+        } catch (error) {
+            console.error('Ошибка при сохранении пропуска:', error);
+            throw error;
+        }
+    },
+
+    getActiveGlobalRound: async () => {
+        const result = await pool.query(`
+            SELECT id FROM global_rounds 
+            WHERE is_active = true
+            LIMIT 1
+        `);
+        return result.rows[0];
+    },
+
+    getNextGlobalProfile: async (voterId, roundId) => {
+        const result = await pool.query(`
+            SELECT u.* FROM users u
+            WHERE u.in_global_rating = true
+            AND NOT EXISTS (
+                SELECT 1 FROM global_votes 
+                WHERE voter_id = $1 
+                AND candidate_id = u.user_id 
+                AND round_id = $2
+            )
+            LIMIT 1
+        `, [voterId, roundId]);
+        return result.rows[0];
     }
 };
 
