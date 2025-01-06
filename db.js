@@ -47,6 +47,30 @@ const initDb = async () => {
                 round_end_time TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS global_ratings (
+                id SERIAL PRIMARY KEY,
+                from_user_id BIGINT REFERENCES users(user_id),
+                to_user_id BIGINT REFERENCES users(user_id),
+                rating INTEGER CHECK (rating >= 1 AND rating <= 10),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS global_rounds (
+                id SERIAL PRIMARY KEY,
+                start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                rating_end_time TIMESTAMP,
+                voting_end_time TIMESTAMP,
+                is_active BOOLEAN DEFAULT true
+            );
+
+            CREATE TABLE IF NOT EXISTS global_votes (
+                id SERIAL PRIMARY KEY,
+                voter_id BIGINT REFERENCES users(user_id),
+                candidate_id BIGINT REFERENCES users(user_id),
+                round_id INTEGER REFERENCES global_rounds(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         `);
         console.log('База данных инициализирована');
     } catch (err) {
@@ -382,65 +406,203 @@ const db = {
     },
 
     joinGlobalRating: async (userId) => {
-        const result = await pool.query(`
-            UPDATE users 
-            SET in_global_rating = true,
-                coins = coins - 50
-            WHERE user_id = $1 
-            AND coins >= 50
-            RETURNING *
-        `, [userId]);
-        return result.rows[0];
-    },
-
-    getGlobalRatingProfiles: async (userId) => {
-        const result = await pool.query(`
-            SELECT u.*, array_agg(p.photo_id) as photos
-            FROM users u
-            LEFT JOIN photos p ON u.user_id = p.user_id
-            WHERE u.in_global_rating = true
-            AND u.user_id != $1
-            GROUP BY u.user_id
-        `, [userId]);
-        return result.rows;
-    },
-
-    updateGlobalWinner: async () => {
         try {
             await pool.query('BEGIN');
 
-            // Находим победителя
-            const winner = await pool.query(`
-                SELECT user_id, average_rating
-                FROM users
-                WHERE in_global_rating = true
-                ORDER BY average_rating DESC
+            // Проверяем активный раунд
+            const activeRound = await pool.query(`
+                SELECT * FROM global_rounds 
+                WHERE is_active = true
                 LIMIT 1
             `);
 
-            if (winner.rows.length > 0) {
-                const winnerId = winner.rows[0].user_id;
+            // Если нет активного раунда, создаем новый
+            if (activeRound.rows.length === 0) {
+                const now = new Date();
+                const ratingEndTime = new Date(now.getTime() + 3 * 60 * 1000); // +3 минуты
+                const votingEndTime = new Date(ratingEndTime.getTime() + 5 * 60 * 1000); // +5 минут
 
-                // Начисляем награду и сбрасываем рейтинг
                 await pool.query(`
-                    UPDATE users
-                    SET coins = coins + 500,
-                        average_rating = 0,
-                        in_global_rating = false,
-                        last_global_win = CURRENT_TIMESTAMP
-                    WHERE user_id = $1
-                `, [winnerId]);
-
-                // Сбрасываем флаг участия у всех остальных
-                await pool.query(`
-                    UPDATE users
-                    SET in_global_rating = false
-                    WHERE user_id != $1
-                `, [winnerId]);
+                    INSERT INTO global_rounds (start_time, rating_end_time, voting_end_time)
+                    VALUES ($1, $2, $3)
+                `, [now, ratingEndTime, votingEndTime]);
             }
 
+            // Списываем монеты и добавляем пользователя в глобальный рейтинг
+            const result = await pool.query(`
+                UPDATE users 
+                SET in_global_rating = true,
+                    coins = coins - 50
+                WHERE user_id = $1 
+                AND coins >= 50
+                AND (last_global_win IS NULL OR last_global_win < NOW() - INTERVAL '2 hours')
+                RETURNING *
+            `, [userId]);
+
             await pool.query('COMMIT');
-            return winner.rows[0];
+            return result.rows[0];
+        } catch (error) {
+            await pool.query('ROLLBACK');
+            throw error;
+        }
+    },
+
+    saveGlobalRating: async (fromUserId, toUserId, rating) => {
+        try {
+            await pool.query('BEGIN');
+
+            // Проверяем, не оценивал ли уже этот пользователь
+            const existingRating = await pool.query(`
+                SELECT * FROM global_ratings 
+                WHERE from_user_id = $1 AND to_user_id = $2
+            `, [fromUserId, toUserId]);
+
+            if (existingRating.rows.length > 0) {
+                throw new Error('Вы уже оценили этого пользователя');
+            }
+
+            // Проверяем активный раунд
+            const activeRound = await pool.query(`
+                SELECT * FROM global_rounds 
+                WHERE is_active = true 
+                AND NOW() < rating_end_time
+                LIMIT 1
+            `);
+
+            if (activeRound.rows.length === 0) {
+                throw new Error('Активный раунд не найден или время оценок истекло');
+            }
+
+            // Сохраняем оценку
+            await pool.query(`
+                INSERT INTO global_ratings (from_user_id, to_user_id, rating)
+                VALUES ($1, $2, $3)
+            `, [fromUserId, toUserId, rating]);
+
+            await pool.query('COMMIT');
+        } catch (error) {
+            await pool.query('ROLLBACK');
+            throw error;
+        }
+    },
+
+    getGlobalRatingCandidates: async () => {
+        const result = await pool.query(`
+            SELECT u.*, 
+                   COALESCE(AVG(gr.rating), 0) as global_rating,
+                   array_agg(DISTINCT p.photo_id) as photos
+            FROM users u
+            LEFT JOIN global_ratings gr ON u.user_id = gr.to_user_id
+            LEFT JOIN photos p ON u.user_id = p.user_id
+            WHERE u.in_global_rating = true
+            GROUP BY u.user_id
+            ORDER BY global_rating DESC
+            LIMIT 10
+        `);
+        return result.rows;
+    },
+
+    saveGlobalVote: async (voterId, candidateId, roundId) => {
+        try {
+            await pool.query('BEGIN');
+
+            // Проверяем, не голосовал ли уже пользователь
+            const existingVote = await pool.query(`
+                SELECT * FROM global_votes
+                WHERE voter_id = $1 AND round_id = $2
+            `, [voterId, roundId]);
+
+            if (existingVote.rows.length > 0) {
+                throw new Error('Вы уже проголосовали в этом раунде');
+            }
+
+            // Сохраняем голос
+            await pool.query(`
+                INSERT INTO global_votes (voter_id, candidate_id, round_id)
+                VALUES ($1, $2, $3)
+            `, [voterId, candidateId, roundId]);
+
+            // Добавляем 50 к рейтингу выбранного кандидата
+            await pool.query(`
+                UPDATE users
+                SET average_rating = average_rating + 50
+                WHERE user_id = $1
+            `, [candidateId]);
+
+            await pool.query('COMMIT');
+        } catch (error) {
+            await pool.query('ROLLBACK');
+            throw error;
+        }
+    },
+
+    updateGlobalWinners: async () => {
+        try {
+            await pool.query('BEGIN');
+
+            // Находим активный раунд, где время голосования истекло
+            const expiredRound = await pool.query(`
+                SELECT * FROM global_rounds
+                WHERE is_active = true
+                AND NOW() > voting_end_time
+                LIMIT 1
+            `);
+
+            if (expiredRound.rows.length === 0) {
+                await pool.query('COMMIT');
+                return null;
+            }
+
+            const roundId = expiredRound.rows[0].id;
+
+            // Получаем победителей
+            const winners = await pool.query(`
+                SELECT 
+                    u.user_id,
+                    u.name,
+                    COALESCE(AVG(gr.rating), 0) + 
+                    COALESCE((
+                        SELECT COUNT(*) * 50 
+                        FROM global_votes 
+                        WHERE candidate_id = u.user_id 
+                        AND round_id = $1
+                    ), 0) as final_rating
+                FROM users u
+                LEFT JOIN global_ratings gr ON u.user_id = gr.to_user_id
+                WHERE u.in_global_rating = true
+                GROUP BY u.user_id, u.name
+                ORDER BY final_rating DESC
+                LIMIT 3
+            `, [roundId]);
+
+            // Начисляем награды победителям
+            const rewards = [500, 300, 100];
+            for (let i = 0; i < winners.rows.length; i++) {
+                await pool.query(`
+                    UPDATE users
+                    SET coins = coins + $1,
+                        in_global_rating = false,
+                        last_global_win = CURRENT_TIMESTAMP
+                    WHERE user_id = $2
+                `, [rewards[i], winners.rows[i].user_id]);
+            }
+
+            // Сбрасываем флаг участия у остальных
+            await pool.query(`
+                UPDATE users
+                SET in_global_rating = false
+                WHERE user_id NOT IN (${winners.rows.map(w => w.user_id).join(',')})
+            `);
+
+            // Закрываем раунд
+            await pool.query(`
+                UPDATE global_rounds
+                SET is_active = false
+                WHERE id = $1
+            `, [roundId]);
+
+            await pool.query('COMMIT');
+            return winners.rows;
         } catch (error) {
             await pool.query('ROLLBACK');
             throw error;

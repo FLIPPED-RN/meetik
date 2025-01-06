@@ -497,7 +497,10 @@ bot.hears('🌍 Глобальный рейтинг', async (ctx) => {
 
         const joinMessage = `🌍 *Глобальный рейтинг*\n\n` +
             `Стоимость участия: 50 монет\n` +
-            `Награда победителю: 500 монет\n\n` +
+            `Награды победителям:\n` +
+            `🥇 1 место: 500 монет\n` +
+            `🥈 2 место: 300 монет\n` +
+            `🥉 3 место: 100 монет\n\n` +
             `Ваш баланс: ${user.coins} монет\n\n` +
             `После победы ваш рейтинг будет сброшен в 0.`;
 
@@ -591,58 +594,72 @@ bot.action(/^rate_(\d+)_(\d+)$/, async (ctx) => {
         const ratingNum = parseInt(rating);
         const targetIdNum = parseInt(targetId);
 
-        const ratingResult = await db.saveRating(targetIdNum, ctx.from.id, ratingNum);
-        await ctx.answerCbQuery('✅ Оценка сохранена!');
+        // Получаем профиль оцениваемого пользователя
+        const targetProfile = await db.getUserProfile(targetIdNum);
         
-        // Обработка высоких оценок
-        if (ratingNum >= 7) {
-            // Отправляем уведомление оцененному пользователю
-            const raterProfile = await db.getUserProfile(ctx.from.id);
-            const ratedUserPhotos = await db.getUserPhotos(ctx.from.id);
+        try {
+            const ratingResult = await (targetProfile.in_global_rating ? 
+                db.saveGlobalRating(ctx.from.id, targetIdNum, ratingNum) :
+                db.saveRating(targetIdNum, ctx.from.id, ratingNum));
             
-            const notificationText = `🌟 *Вас высоко оценили!*\n\n` +
-                `Пользователь оценил вас на ${ratingNum}/10:\n` +
-                `👤 *${raterProfile.name}*\n` +
-                `🎂 Возраст: ${raterProfile.age}\n` +
-                `🌆 Город: ${raterProfile.city}\n` +
-                `${raterProfile.username ? `📱 @${raterProfile.username}\n` : ''}` +
-                `${raterProfile.description ? `📄 О себе: ${raterProfile.description}\n` : ''}\n` +
-                `Можете начать общение прямо сейчас! 😊`;
+            await ctx.answerCbQuery('✅ Оценка сохранена!');
+            
+            // Обработка высоких оценок
+            if (ratingNum >= 7) {
+                // Отправляем уведомление оцененному пользователю
+                const raterProfile = await db.getUserProfile(ctx.from.id);
+                const ratedUserPhotos = await db.getUserPhotos(ctx.from.id);
+                
+                const notificationText = `🌟 *Вас высоко оценили!*\n\n` +
+                    `Пользователь оценил вас на ${ratingNum}/10:\n` +
+                    `👤 *${raterProfile.name}*\n` +
+                    `🎂 Возраст: ${raterProfile.age}\n` +
+                    `🌆 Город: ${raterProfile.city}\n` +
+                    `${raterProfile.username ? `📱 @${raterProfile.username}\n` : ''}` +
+                    `${raterProfile.description ? `📄 О себе: ${raterProfile.description}\n` : ''}\n` +
+                    `Можете начать общение прямо сейчас! 😊`;
 
-            if (ratedUserPhotos.length > 0) {
-                const mediaGroup = ratedUserPhotos.map((photoId, index) => ({
-                    type: 'photo',
-                    media: photoId,
-                    ...(index === 0 && { caption: notificationText, parse_mode: 'Markdown' })
-                }));
-                await bot.telegram.sendMediaGroup(targetIdNum, mediaGroup);
+                if (ratedUserPhotos.length > 0) {
+                    const mediaGroup = ratedUserPhotos.map((photoId, index) => ({
+                        type: 'photo',
+                        media: photoId,
+                        ...(index === 0 && { caption: notificationText, parse_mode: 'Markdown' })
+                    }));
+                    await bot.telegram.sendMediaGroup(targetIdNum, mediaGroup);
+                } else {
+                    await bot.telegram.sendMessage(targetIdNum, notificationText, { parse_mode: 'Markdown' });
+                }
+
+                // Если есть взаимная высокая оценка
+                if (ratingResult && ratingResult.isMutualHigh) {
+                    const matchText = '💝 *У вас взаимная симпатия!*\n' +
+                                    'Вы можете начать общение прямо сейчас!';
+                    await ctx.reply(matchText, { parse_mode: 'Markdown' });
+                    await bot.telegram.sendMessage(targetIdNum, matchText, { parse_mode: 'Markdown' });
+                }
+            }
+            
+            // Показываем следующий профиль
+            const nextProfile = await db.getNextProfile(ctx.from.id);
+            if (ctx.callbackQuery.message) {
+                try {
+                    await ctx.deleteMessage(ctx.callbackQuery.message.message_id);
+                } catch (error) {
+                    console.log('Ошибка при удалении сообщения:', error);
+                }
+            }
+            
+            if (nextProfile) {
+                await sendProfileForRating(ctx, nextProfile);
             } else {
-                await bot.telegram.sendMessage(targetIdNum, notificationText, { parse_mode: 'Markdown' });
+                await ctx.reply('Вы оценили все доступные анкеты! Приходите позже.');
             }
-
-            // Если есть взаимная высокая оценка
-            if (ratingResult && ratingResult.isMutualHigh) {
-                const matchText = '💝 *У вас взаимная симпатия!*\n' +
-                                'Вы можете начать общение прямо сейчас!';
-                await ctx.reply(matchText, { parse_mode: 'Markdown' });
-                await bot.telegram.sendMessage(targetIdNum, matchText, { parse_mode: 'Markdown' });
+        } catch (ratingError) {
+            if (ratingError.message === 'Вы уже оценили этого пользователя') {
+                await ctx.answerCbQuery('⚠️ Вы уже оценили этого пользователя');
+                return;
             }
-        }
-        
-        // Показываем следующий профиль
-        const nextProfile = await db.getNextProfile(ctx.from.id);
-        if (ctx.callbackQuery.message) {
-            try {
-                await ctx.deleteMessage(ctx.callbackQuery.message.message_id);
-            } catch (error) {
-                console.log('Ошибка при удалении сообщения:', error);
-            }
-        }
-        
-        if (nextProfile) {
-            await sendProfileForRating(ctx, nextProfile);
-        } else {
-            await ctx.reply('Вы оценили все доступные анкеты! Приходите позже.');
+            throw ratingError;
         }
     } catch (error) {
         console.error('Ошибка при сохранении оценки:', error);
@@ -694,27 +711,41 @@ function startWinnersUpdate() {
         } catch (error) {
             console.error('Ошибка при обновлении победителей:', error);
         }
-    }, 10000); // 10 секунд
+    }, 10000);
 }
 
 // Добавляем функцию для запуска проверки глобального рейтинга
 function startGlobalRatingUpdate() {
-    setInterval(async () => {
-        try {
-            const winner = await db.updateGlobalWinner();
-            
-            if (winner) {
-                // Отправляем сообщение победителю
-                await bot.telegram.sendMessage(winner.user_id,
-                    '🎉 Поздравляем! Вы победили в глобальном рейтинге!\n' +
-                    '💰 На ваш счет начислено 500 монет!\n' +
-                    '⚠️ Ваш рейтинг сброшен для следующего участия.'
-                );
-            }
-        } catch (error) {
-            console.error('Ошибка при обновлении глобального рейтинга:', error);
+    // Запускаем сразу при старте бота
+    checkAndUpdateGlobalRating();
+    
+    // Затем проверяем каждый час
+    setInterval(checkAndUpdateGlobalRating, 60 * 60 * 1000);
+}
+
+async function checkAndUpdateGlobalRating() {
+    try {
+        // Проверяем активный раунд
+        const activeRound = await pool.query(`
+            SELECT * FROM global_rounds 
+            WHERE is_active = true
+            LIMIT 1
+        `);
+
+        // Если нет активного раунда, создаем новый
+        if (activeRound.rows.length === 0) {
+            const now = new Date();
+            const ratingEndTime = new Date(now.getTime() + 3 * 60 * 1000); // +3 минуты
+            const votingEndTime = new Date(ratingEndTime.getTime() + 5 * 60 * 1000); // +5 минут
+
+            await pool.query(`
+                INSERT INTO global_rounds (start_time, rating_end_time, voting_end_time, is_active)
+                VALUES ($1, $2, $3, true)
+            `, [now, ratingEndTime, votingEndTime]);
         }
-    }, 24 * 60 * 60 * 1000); // Проверка каждые 24 часа
+    } catch (error) {
+        console.error('Ошибка при проверке глобального рейтинга:', error);
+    }
 }
 
 // Обновляем запуск бота
@@ -792,3 +823,89 @@ function formatDate(date) {
         minute: '2-digit'
     });
 }
+
+async function sendVotingMessage(userId, candidates, currentIndex) {
+    if (!candidates || candidates.length === 0) {
+        return bot.telegram.sendMessage(userId, 'Нет доступных кандидатов для голосования.');
+    }
+
+    const candidate = candidates[currentIndex];
+    const photos = candidate.photos || [];
+    const caption = `👤 *${candidate.name}*, ${candidate.age} лет\n` +
+                   `🌆 ${candidate.city}\n` +
+                   `📝 ${candidate.description || 'Нет описания'}\n` +
+                   `⭐️ Текущий рейтинг: ${Number(candidate.global_rating).toFixed(2)}\n\n` +
+                   `Кандидат ${currentIndex + 1} из ${candidates.length}`;
+
+    const keyboard = {
+        inline_keyboard: [
+            [
+                currentIndex > 0 ? 
+                    { text: '⬅️ Предыдущий', callback_data: `vote_prev_${currentIndex}` } : 
+                    { text: '⬅️', callback_data: 'noop' },
+                { text: '✅ Выбрать', callback_data: `vote_select_${candidate.user_id}` },
+                currentIndex < candidates.length - 1 ? 
+                    { text: 'Следующий ➡️', callback_data: `vote_next_${currentIndex}` } : 
+                    { text: '➡️', callback_data: 'noop' }
+            ]
+        ]
+    };
+
+    if (photos.length > 0) {
+        await bot.telegram.sendPhoto(userId, photos[0], {
+            caption: caption,
+            parse_mode: 'Markdown',
+            reply_markup: keyboard
+        });
+    } else {
+        await bot.telegram.sendMessage(userId, caption, {
+            parse_mode: 'Markdown',
+            reply_markup: keyboard
+        });
+    }
+}
+
+// Обработчик для кнопок навигации при голосовании
+bot.action(/^vote_(prev|next)_(\d+)$/, async (ctx) => {
+    try {
+        const direction = ctx.match[1];
+        const currentIndex = parseInt(ctx.match[2]);
+        const candidates = await db.getGlobalRatingCandidates();
+        
+        let newIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+        if (newIndex < 0) newIndex = 0;
+        if (newIndex >= candidates.length) newIndex = candidates.length - 1;
+
+        await ctx.deleteMessage();
+        await sendVotingMessage(ctx.from.id, candidates, newIndex);
+        await ctx.answerCbQuery();
+    } catch (error) {
+        console.error('Ошибка при навигации:', error);
+        await ctx.answerCbQuery('Произошла ошибка');
+    }
+});
+
+// Обработчик для кнопки выбора кандидата
+bot.action(/^vote_select_(\d+)$/, async (ctx) => {
+    try {
+        const candidateId = parseInt(ctx.match[1]);
+        const activeRound = await pool.query(`
+            SELECT * FROM global_rounds 
+            WHERE is_active = true 
+            AND NOW() < voting_end_time
+            LIMIT 1
+        `);
+
+        if (activeRound.rows.length === 0) {
+            return ctx.answerCbQuery('Время голосования истекло');
+        }
+
+        await db.saveGlobalVote(ctx.from.id, candidateId, activeRound.rows[0].id);
+        await ctx.deleteMessage();
+        await ctx.reply('✅ Ваш голос учтен! Спасибо за участие в голосовании!');
+        await ctx.answerCbQuery('Голос успешно учтен');
+    } catch (error) {
+        console.error('Ошибка при голосовании:', error);
+        await ctx.answerCbQuery(error.message || 'Произошла ошибка при голосовании');
+    }
+});
