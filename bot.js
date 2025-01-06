@@ -23,14 +23,14 @@ const registrationScene = new Scenes.WizardScene(
             return;
         }
         ctx.wizard.state.name = name;
-        await ctx.reply('Сколько вам лет? (18-100)');
+        await ctx.reply('Сколько вам лет? (14-99)');
         return ctx.wizard.next();
     },
     // Шаг 3: Запрос города
     async (ctx) => {
         const age = parseInt(ctx.message.text);
-        if (isNaN(age) || age < 18 || age > 100) {
-            await ctx.reply('Пожалуйста, введите корректный возраст (18-100)');
+        if (isNaN(age) || age < 14 || age > 99) {
+            await ctx.reply('Пожалуйста, введите корректный возраст (14-99)');
             return;
         }
         ctx.wizard.state.age = age;
@@ -223,7 +223,7 @@ const editProfileScene = new Scenes.WizardScene(
                 await ctx.reply('Введите новое имя (только буквы, 2-30 символов):');
                 break;
             case 'edit_age':
-                await ctx.reply('Введите новый возраст (18-100):');
+                await ctx.reply('Введите новый возраст (14-99):');
                 break;
             case 'edit_city':
                 await ctx.reply('Введите новый город (2-50 символов):');
@@ -261,7 +261,7 @@ const editProfileScene = new Scenes.WizardScene(
 
                 case 'edit_age':
                     const age = parseInt(ctx.message.text);
-                    if (isNaN(age) || age < 18 || age > 100) {
+                    if (isNaN(age) || age < 14 || age > 99) {
                         await ctx.reply('Некорректный возраст. Попробуйте еще раз:');
                         return;
                     }
