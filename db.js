@@ -54,7 +54,8 @@ const initDb = async () => {
                 from_user_id BIGINT REFERENCES users(user_id),
                 to_user_id BIGINT REFERENCES users(user_id),
                 rating INTEGER CHECK (rating >= 1 AND rating <= 10),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                round_id INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS global_rounds (
@@ -583,7 +584,6 @@ const db = {
                 await pool.query(`
                     UPDATE users
                     SET coins = coins + $1,
-                        in_global_rating = false,
                         last_global_win = CURRENT_TIMESTAMP
                     WHERE user_id = $2
                 `, [rewards[i], winners.rows[i].user_id]);
@@ -593,7 +593,7 @@ const db = {
             await pool.query(`
                 UPDATE users
                 SET in_global_rating = false
-                WHERE user_id NOT IN (${winners.rows.map(w => w.user_id).join(',')})
+                WHERE in_global_rating = true
             `);
 
             // Закрываем раунд
@@ -672,19 +672,35 @@ const db = {
         return result.rows[0];
     },
 
-    getNextGlobalProfile: async (voterId, roundId) => {
+    getNextGlobalProfile: async (userId, roundId) => {
         const result = await pool.query(`
-            SELECT u.* FROM users u
+            SELECT u.*, array_agg(p.photo_id) as photos
+            FROM users u
+            LEFT JOIN photos p ON u.user_id = p.user_id
             WHERE u.in_global_rating = true
+            AND u.user_id != $1  -- Добавляем проверку, чтобы исключить свой профиль
             AND NOT EXISTS (
-                SELECT 1 FROM global_votes 
-                WHERE voter_id = $1 
-                AND candidate_id = u.user_id 
-                AND round_id = $2
+                SELECT 1 
+                FROM global_ratings gr 
+                WHERE gr.from_user_id = $1 
+                AND gr.to_user_id = u.user_id
+                AND gr.round_id = $2
             )
+            GROUP BY u.user_id
+            ORDER BY RANDOM()
             LIMIT 1
-        `, [voterId, roundId]);
+        `, [userId, roundId]);
+
         return result.rows[0];
+    },
+
+    getGlobalParticipantsCount: async () => {
+        const result = await pool.query(`
+            SELECT COUNT(*) as count
+            FROM users
+            WHERE in_global_rating = true
+        `);
+        return result.rows[0].count;
     }
 };
 
