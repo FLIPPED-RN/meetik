@@ -346,7 +346,7 @@ const mainMenu = {
         keyboard: [
             ['🔍 Начать оценивать', '👑 Лидеры'],
             ['👤 Мой профиль', '💰 Баланс'],
-            ['🌍 Глобальный рейтинг']
+            ['🌍 Глобальный рейтинг', '⭐️ Кто меня оценил']
         ],
         resize_keyboard: true
     }
@@ -584,44 +584,53 @@ async function sendProfileForRating(ctx, profile) {
     }
 }
 
-// Обработчик оценок (обновленный)
+// Обновляем обработчик оценок
 bot.action(/^rate_(\d+)_(\d+)$/, async (ctx) => {
     try {
         const [, rating, targetId] = ctx.match;
-        console.log('Rating:', rating, 'Target ID:', targetId);
+        const ratingNum = parseInt(rating);
+        const targetIdNum = parseInt(targetId);
 
-        await db.saveRating(parseInt(targetId), ctx.from.id, parseInt(rating));
+        const ratingResult = await db.saveRating(targetIdNum, ctx.from.id, ratingNum);
         await ctx.answerCbQuery('✅ Оценка сохранена!');
         
-        // Добавляем обработку высоких оценок
-        if (parseInt(rating) >= 7) {
-            const ratedUser = await db.getUserProfile(parseInt(targetId));
-            const ratedUserPhotos = await db.getUserPhotos(parseInt(targetId));
+        // Обработка высоких оценок
+        if (ratingNum >= 7) {
+            // Отправляем уведомление оцененному пользователю
+            const raterProfile = await db.getUserProfile(ctx.from.id);
+            const ratedUserPhotos = await db.getUserPhotos(ctx.from.id);
             
-            const matchText = `🌟 *Отличный выбор!*\n\n` +
-                `Вы поставили высокую оценку пользователю:\n` +
-                `👤 *${ratedUser.name}*\n` +
-                `🎂 Возраст: ${ratedUser.age}\n` +
-                `🌆 Город: ${ratedUser.city}\n` +
-                `${ratedUser.username ? `👤 Username: @${ratedUser.username}\n` : ''}`+
-                `${ratedUser.description ? `📄 О себе: ${ratedUser.description}\n` : ''}\n` +
-                `Желаем приятного общения! 😊`;
+            const notificationText = `🌟 *Вас высоко оценили!*\n\n` +
+                `Пользователь оценил вас на ${ratingNum}/10:\n` +
+                `👤 *${raterProfile.name}*\n` +
+                `🎂 Возраст: ${raterProfile.age}\n` +
+                `🌆 Город: ${raterProfile.city}\n` +
+                `${raterProfile.username ? `📱 @${raterProfile.username}\n` : ''}` +
+                `${raterProfile.description ? `📄 О себе: ${raterProfile.description}\n` : ''}\n` +
+                `Можете начать общение прямо сейчас! 😊`;
 
             if (ratedUserPhotos.length > 0) {
                 const mediaGroup = ratedUserPhotos.map((photoId, index) => ({
                     type: 'photo',
                     media: photoId,
-                    ...(index === 0 && { caption: matchText, parse_mode: 'Markdown' })
+                    ...(index === 0 && { caption: notificationText, parse_mode: 'Markdown' })
                 }));
-                await ctx.replyWithMediaGroup(mediaGroup);
+                await bot.telegram.sendMediaGroup(targetIdNum, mediaGroup);
             } else {
+                await bot.telegram.sendMessage(targetIdNum, notificationText, { parse_mode: 'Markdown' });
+            }
+
+            // Если есть взаимная высокая оценка
+            if (ratingResult && ratingResult.isMutualHigh) {
+                const matchText = '💝 *У вас взаимная симпатия!*\n' +
+                                'Вы можете начать общение прямо сейчас!';
                 await ctx.reply(matchText, { parse_mode: 'Markdown' });
+                await bot.telegram.sendMessage(targetIdNum, matchText, { parse_mode: 'Markdown' });
             }
         }
         
+        // Показываем следующий профиль
         const nextProfile = await db.getNextProfile(ctx.from.id);
-        
-        // Удаляем старые сообщения с клавиатурой
         if (ctx.callbackQuery.message) {
             try {
                 await ctx.deleteMessage(ctx.callbackQuery.message.message_id);
@@ -737,3 +746,49 @@ function getTimeUntilNextRating(lastWinTime) {
 bot.action('edit_profile', async (ctx) => {
     await ctx.scene.enter('edit_profile');
 });
+
+// Обработчик для кнопки "Кто меня оценил"
+bot.hears('⭐️ Кто меня оценил', async (ctx) => {
+    try {
+        const ratings = await db.getLastRatings(ctx.from.id);
+        
+        if (!ratings || ratings.length === 0) {
+            return ctx.reply('Пока никто не оценил ваш профиль.');
+        }
+
+        let message = '🌟 *Последние оценки вашего профиля:*\n\n';
+        
+        for (const rating of ratings) {
+            const raterProfile = await db.getUserProfile(rating.from_user_id);
+            if (raterProfile) {
+                message += `👤 *${raterProfile.name}*, ${raterProfile.age} лет\n` +
+                          `🌆 ${raterProfile.city}\n` +
+                          `⭐️ Оценка: ${rating.rating}/10\n` +
+                          `🕐 ${formatDate(rating.created_at)}\n`;
+                
+                // Добавляем username если оценка высокая
+                if (rating.rating >= 7 && raterProfile.username) {
+                    message += `📱 @${raterProfile.username}\n`;
+                }
+                message += '\n';
+            }
+        }
+
+        await ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error('Ошибка при получении оценок:', error);
+        await ctx.reply('Произошла ошибка при загрузке оценок.');
+    }
+});
+
+// Вспомогательная функция для форматирования даты
+function formatDate(date) {
+    const d = new Date(date);
+    return d.toLocaleString('ru-RU', { 
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}

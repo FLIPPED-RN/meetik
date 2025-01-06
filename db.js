@@ -15,6 +15,7 @@ const initDb = async () => {
                 gender VARCHAR(10) NOT NULL,
                 preferences VARCHAR(10) NOT NULL,
                 description TEXT,
+                username VARCHAR(255),
                 coins INTEGER DEFAULT 0,
                 average_rating DECIMAL(4,2) DEFAULT 0,
                 last_win_time TIMESTAMP,
@@ -291,8 +292,7 @@ const db = {
             
             // Обновляем средний рейтинг
             const ratingResult = await pool.query(`
-                SELECT ROUND(AVG(rating)::numeric, 2) as avg_rating,
-                       COUNT(*) as total_ratings
+                SELECT ROUND(AVG(rating)::numeric, 2) as avg_rating
                 FROM ratings
                 WHERE to_user_id = $1
             `, [targetId]);
@@ -308,7 +308,7 @@ const db = {
             
             // Если оценка высокая (7-10), начисляем монеты
             if (rating >= 7) {
-                const coinsToAdd = rating - 6; // 7=1 монета, 8=2 монеты и т.д.
+                const coinsToAdd = rating - 6;
                 await pool.query(`
                     UPDATE users 
                     SET coins = COALESCE(coins, 0) + $1
@@ -317,6 +317,25 @@ const db = {
             }
             
             await pool.query('COMMIT');
+            
+            // Возвращаем информацию о взаимных высоких оценках
+            if (rating >= 7) {
+                const mutualRating = await pool.query(`
+                    SELECT rating 
+                    FROM ratings 
+                    WHERE from_user_id = $1 AND to_user_id = $2 
+                    AND rating >= 7
+                `, [targetId, fromUserId]);
+                
+                return {
+                    isMutualHigh: mutualRating.rows.length > 0,
+                    targetId,
+                    fromUserId,
+                    rating
+                };
+            }
+            
+            return null;
         } catch (error) {
             await pool.query('ROLLBACK');
             throw error;
@@ -454,6 +473,18 @@ const db = {
             await pool.query('ROLLBACK');
             throw error;
         }
+    },
+
+    getLastRatings: async (userId) => {
+        const result = await pool.query(`
+            SELECT r.*, u.username 
+            FROM ratings r
+            LEFT JOIN users u ON r.from_user_id = u.user_id
+            WHERE r.to_user_id = $1
+            ORDER BY r.created_at DESC
+            LIMIT 5
+        `, [userId]);
+        return result.rows;
     }
 };
 
