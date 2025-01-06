@@ -181,8 +181,162 @@ const registrationScene = new Scenes.WizardScene(
     }
 );
 
+// Добавляем сцену редактирования профиля
+const editProfileScene = new Scenes.WizardScene(
+    'edit_profile',
+    // Шаг 1: Показ текущего профиля и выбор что редактировать
+    async (ctx) => {
+        const user = await db.getUserProfile(ctx.from.id);
+        if (!user) {
+            await ctx.reply('Профиль не найден');
+            return ctx.scene.leave();
+        }
+
+        await ctx.reply('Что вы хотите изменить?', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📝 Имя', callback_data: 'edit_name' }],
+                    [{ text: '🎂 Возраст', callback_data: 'edit_age' }],
+                    [{ text: '🌆 Город', callback_data: 'edit_city' }],
+                    [{ text: '📄 Описание', callback_data: 'edit_description' }],
+                    [{ text: '🖼 Фотографии', callback_data: 'edit_photos' }],
+                    [{ text: '❌ Отмена', callback_data: 'cancel_edit' }]
+                ]
+            }
+        });
+        return ctx.wizard.next();
+    },
+    // Шаг 2: Обработка выбора и запрос нового значения
+    async (ctx) => {
+        if (!ctx.callbackQuery) return;
+
+        const action = ctx.callbackQuery.data;
+        ctx.wizard.state.editField = action;
+
+        if (action === 'cancel_edit') {
+            await ctx.reply('Редактирование отменено', mainMenu);
+            return ctx.scene.leave();
+        }
+
+        switch (action) {
+            case 'edit_name':
+                await ctx.reply('Введите новое имя (только буквы, 2-30 символов):');
+                break;
+            case 'edit_age':
+                await ctx.reply('Введите новый возраст (18-100):');
+                break;
+            case 'edit_city':
+                await ctx.reply('Введите новый город (2-50 символов):');
+                break;
+            case 'edit_description':
+                await ctx.reply('Введите новое описание (до 500 символов) или нажмите кнопку "Пропустить"', {
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: 'Пропустить', callback_data: 'skip_description' }
+                        ]]
+                    }
+                });
+                break;
+            case 'edit_photos':
+                ctx.wizard.state.photos = [];
+                await ctx.reply('Отправьте новые фотографии (минимум 1, максимум 3). Старые фото будут заменены.');
+                break;
+        }
+        return ctx.wizard.next();
+    },
+    // Шаг 3: Сохранение изменений
+    async (ctx) => {
+        const editField = ctx.wizard.state.editField;
+
+        try {
+            switch (editField) {
+                case 'edit_name':
+                    const name = ctx.message.text.trim();
+                    if (!name.match(/^[а-яА-ЯёЁa-zA-Z\s]{2,30}$/)) {
+                        await ctx.reply('Некорректное имя. Попробуйте еще раз:');
+                        return;
+                    }
+                    await db.updateUserField(ctx.from.id, 'name', name);
+                    break;
+
+                case 'edit_age':
+                    const age = parseInt(ctx.message.text);
+                    if (isNaN(age) || age < 18 || age > 100) {
+                        await ctx.reply('Некорректный возраст. Попробуйте еще раз:');
+                        return;
+                    }
+                    await db.updateUserField(ctx.from.id, 'age', age);
+                    break;
+
+                case 'edit_city':
+                    const city = ctx.message.text.trim();
+                    if (!city.match(/^[а-яА-ЯёЁa-zA-Z\s-]{2,50}$/)) {
+                        await ctx.reply('Некорректное название города. Попробуйте еще раз:');
+                        return;
+                    }
+                    await db.updateUserField(ctx.from.id, 'city', city);
+                    break;
+
+                case 'edit_description':
+                    if (ctx.callbackQuery?.data === 'skip_description') {
+                        await db.updateUserField(ctx.from.id, 'description', '');
+                    } else {
+                        const description = ctx.message.text.trim();
+                        if (description.length > 500) {
+                            await ctx.reply('Описание слишком длинное. Попробуйте еще раз:');
+                            return;
+                        }
+                        await db.updateUserField(ctx.from.id, 'description', description);
+                    }
+                    break;
+
+                case 'edit_photos':
+                    if (ctx.message?.photo) {
+                        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+                        if (photo.file_size && photo.file_size > 5242880) {
+                            await ctx.reply('Фото слишком большое. Максимальный размер - 5MB');
+                            return;
+                        }
+                        
+                        ctx.wizard.state.photos.push(photo.file_id);
+                        
+                        const buttons = [];
+                        if (ctx.wizard.state.photos.length < 3) {
+                            buttons.push([{ text: 'Добавить еще фото', callback_data: 'more_photo' }]);
+                        }
+                        if (ctx.wizard.state.photos.length >= 1) {
+                            buttons.push([{ text: 'Сохранить', callback_data: 'save_photos' }]);
+                        }
+
+                        await ctx.reply(`Фото добавлено! (${ctx.wizard.state.photos.length}/3)`, {
+                            reply_markup: {
+                                inline_keyboard: buttons
+                            }
+                        });
+                        return;
+                    } else if (ctx.callbackQuery) {
+                        if (ctx.callbackQuery.data === 'more_photo') {
+                            await ctx.reply('Отправьте следующее фото');
+                            return;
+                        } else if (ctx.callbackQuery.data === 'save_photos') {
+                            await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
+                        }
+                    }
+                    break;
+            }
+
+            await ctx.reply('Изменения сохранены!', mainMenu);
+            return ctx.scene.leave();
+        } catch (error) {
+            console.error('Ошибка при обновлении профиля:', error);
+            await ctx.reply('Произошла ошибка при сохранении изменений');
+            return ctx.scene.leave();
+        }
+    }
+);
+
 // Создаем менеджер сцен
-const stage = new Scenes.Stage([registrationScene]);
+const stage = new Scenes.Stage([registrationScene, editProfileScene]);
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -217,7 +371,6 @@ bot.hears('👤 Мой профиль', async (ctx) => {
             return ctx.reply('Профиль не найден. Используйте /start для регистрации.');
         }
 
-        // Формируем текст профиля
         const profileText = `👤 *Ваш профиль:*
 📝 Имя: ${user.name}
 🎂 Возраст: ${user.age}
@@ -225,17 +378,28 @@ bot.hears('👤 Мой профиль', async (ctx) => {
 👥 Пол: ${user.gender === 'male' ? 'Мужской' : 'Женский'}
 ${user.description ? `\n📄 О себе: ${user.description}` : ''}`;
 
-        // Отправляем все фото одной медиагруппой
+        // Добавляем кнопку редактирования
+        const editButton = {
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: '✏️ Редактировать профиль', callback_data: 'edit_profile' }
+                ]]
+            }
+        };
+
         if (photos.length > 0) {
             const mediaGroup = photos.map((photoId, index) => ({
                 type: 'photo',
                 media: photoId,
-                // Добавляем подпись только к первому фото
                 ...(index === 0 && { caption: profileText, parse_mode: 'Markdown' })
             }));
             await ctx.replyWithMediaGroup(mediaGroup);
+            await ctx.reply('Управление профилем:', editButton);
         } else {
-            await ctx.reply(profileText, { parse_mode: 'Markdown' });
+            await ctx.reply(profileText, { 
+                parse_mode: 'Markdown',
+                ...editButton
+            });
         }
     } catch (error) {
         console.error('Ошибка при получении профиля:', error);
@@ -568,3 +732,8 @@ function getTimeUntilNextRating(lastWinTime) {
     
     return `${hours}ч ${minutes}м`;
 }
+
+// Добавляем обработчик кнопки редактирования
+bot.action('edit_profile', async (ctx) => {
+    await ctx.scene.enter('edit_profile');
+});

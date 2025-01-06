@@ -426,6 +426,34 @@ const db = {
             await pool.query('ROLLBACK');
             throw error;
         }
+    },
+
+    updateUserField: async (userId, field, value) => {
+        await pool.query(
+            `UPDATE users SET ${field} = $1 WHERE user_id = $2`,
+            [value, userId]
+        );
+    },
+
+    updateUserPhotos: async (userId, photoIds) => {
+        await pool.query('BEGIN');
+        try {
+            // Удаляем старые фото
+            await pool.query('DELETE FROM photos WHERE user_id = $1', [userId]);
+            
+            // Добавляем новые фото
+            for (const photoId of photoIds) {
+                await pool.query(
+                    'INSERT INTO photos (user_id, photo_id) VALUES ($1, $2)',
+                    [userId, photoId]
+                );
+            }
+            
+            await pool.query('COMMIT');
+        } catch (error) {
+            await pool.query('ROLLBACK');
+            throw error;
+        }
     }
 };
 
