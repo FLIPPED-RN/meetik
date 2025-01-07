@@ -20,6 +20,7 @@ bot.use(middleware.rateLimit);
 
 // Команды
 bot.command('start', commands.startCommand);
+bot.command('global', commands.globalRatingCommand);
 bot.hears('👤 Мой профиль', commands.profileCommand);
 bot.hears('🔍 Начать оценивать', commands.startRatingCommand);
 bot.hears('👑 Лидеры', commands.leadersCommand);

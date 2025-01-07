@@ -350,11 +350,30 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            // Проверяем баланс пользователя
-            const user = await client.query('SELECT coins FROM users WHERE user_id = $1', [userId]);
+            // Проверяем баланс и время последней победы пользователя
+            const user = await client.query(`
+                SELECT 
+                    coins, 
+                    last_global_win,
+                    CASE 
+                        WHEN last_global_win IS NOT NULL 
+                        AND last_global_win > NOW() - INTERVAL '2 hours'
+                        THEN TRUE 
+                        ELSE FALSE 
+                    END as is_blocked
+                FROM users 
+                WHERE user_id = $1
+            `, [userId]);
             
             if (!user.rows[0] || user.rows[0].coins < 50) {
                 throw new Error('Недостаточно монет для участия! Необходимо 50 монет.');
+            }
+
+            if (user.rows[0].is_blocked) {
+                const minutesLeft = Math.ceil(
+                    (new Date(user.rows[0].last_global_win).getTime() + 2 * 60 * 60 * 1000 - Date.now()) / 60000
+                );
+                throw new Error(`Вы недавно победили в глобальной оценке! Подождите ещё ${minutesLeft} минут.`);
             }
 
             // Получаем текущий раунд
@@ -362,6 +381,7 @@ const db = {
                 SELECT * FROM global_rounds WHERE is_active = true
             `);
 
+            let isNewRound = false;
             // Если нет активного раунда, создаем новый
             if (!currentRound.rows[0]) {
                 const now = new Date();
@@ -372,6 +392,8 @@ const db = {
                     (start_time, rating_end_time, is_active)
                     VALUES ($1, $2, true)
                 `, [now, ratingEnd]);
+                
+                isNewRound = true;
             }
 
             // Списываем монеты и добавляем участника
@@ -383,6 +405,7 @@ const db = {
             `, [userId]);
 
             await client.query('COMMIT');
+            return { isNewRound };
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;
@@ -393,12 +416,28 @@ const db = {
 
     getCurrentGlobalRound: async () => {
         const result = await pool.query(`
-            SELECT * FROM global_rounds 
+            SELECT *,
+            CASE 
+                WHEN rating_end_time > NOW() THEN 
+                    EXTRACT(EPOCH FROM (rating_end_time - NOW()))/60
+                ELSE 
+                    NULL 
+            END as minutes_left
+            FROM global_rounds 
             WHERE is_active = true 
             ORDER BY start_time DESC 
             LIMIT 1
         `);
-        return result.rows[0]; // Возвращаем null если нет активного раунда
+
+        const round = result.rows[0];
+        
+        // Если раунд существует и время вышло, автоматически завершаем его
+        if (round && round.minutes_left <= 0) {
+            await db.finishGlobalRound();
+            return null;
+        }
+        
+        return round;
     },
 
     getGlobalRatingParticipants: async (excludeUserId = null) => {
@@ -451,6 +490,13 @@ const db = {
         try {
             await client.query('BEGIN');
 
+            // Деактивируем текущий раунд
+            await client.query(`
+                UPDATE global_rounds 
+                SET is_active = false 
+                WHERE is_active = true
+            `);
+
             // Получаем топ-10 участников
             const topParticipants = await client.query(`
                 SELECT u.*, COUNT(gv.voter_id) as votes_count
@@ -471,9 +517,12 @@ const db = {
                     await client.query(`
                         UPDATE users 
                         SET coins = coins + $1,
-                            last_global_win = NOW()
-                        WHERE user_id = $2
-                    `, [coins, participant.user_id]);
+                            last_global_win = CASE 
+                                WHEN $2 <= 2 THEN NOW() -- Обновляем время победы только для топ-3
+                                ELSE last_global_win 
+                            END
+                        WHERE user_id = $3
+                    `, [coins, i, participant.user_id]);
                 }
             }
 

@@ -132,6 +132,13 @@ exports.globalRatingCommand = async (ctx) => {
         const participantsCount = await db.getGlobalRatingParticipantsCount();
         const currentRound = await db.getCurrentGlobalRound();
 
+        // Проверяем, не заблокирован ли пользователь после победы
+        const isBlocked = user.last_global_win && 
+            (new Date(user.last_global_win).getTime() + 2 * 60 * 60 * 1000 > Date.now());
+        
+        const minutesLeft = isBlocked ? 
+            Math.ceil((new Date(user.last_global_win).getTime() + 2 * 60 * 60 * 1000 - Date.now()) / 60000) : 0;
+
         let message = `🌍 *Глобальная оценка*\n\n`;
         message += `💰 Стоимость участия: 50 монет\n`;
         message += `💵 Ваш баланс: ${user.coins} монет\n`;
@@ -148,23 +155,35 @@ exports.globalRatingCommand = async (ctx) => {
         };
 
         if (currentRound && user.in_global_rating) {
-            const endTime = new Date(currentRound.rating_end_time);
-            const timeLeft = Math.floor((endTime - new Date()) / 1000 / 60);
-            
+            const timeLeft = Math.ceil(currentRound.minutes_left);
             const stats = await db.getGlobalRatingParticipants();
             const userRank = stats.findIndex(p => p.user_id === user.user_id) + 1;
             
             message += `\n⏰ До конца раунда: ${timeLeft} минут`;
             message += `\n📊 Ваше текущее место: ${userRank}/${stats.length}`;
             message += `\n\n⏳ Ожидайте окончания раунда...`;
-        } else if (participantsCount < 10) {
-            message += '\n\nНажмите кнопку ниже, чтобы начать новый раунд!';
-            keyboard.reply_markup.inline_keyboard.push([
-                { text: '🎯 Участвовать за 50 монет', callback_data: 'join_global' },
-                { text: '👀 Оценить анкеты', callback_data: 'view_global_profiles' }
-            ]);
-        } else {
-            message += '\n\n❌ Достигнуто максимальное количество участников';
+        } else if (!currentRound) {
+            if (isBlocked) {
+                message += `\n\n⚠️ Вы недавно победили в глобальной оценке!\n`;
+                message += `⏳ Подождите ещё ${minutesLeft} минут для участия.`;
+            } else if (user.coins >= 50) {
+                message += '\n\nНажмите кнопку ниже, чтобы начать новый раунд!';
+                keyboard.reply_markup.inline_keyboard.push([
+                    { text: '🎯 Участвовать за 50 монет', callback_data: 'join_global' }
+                ]);
+            } else {
+                message += '\n\n❌ У вас недостаточно монет для участия';
+            }
+        } else if (participantsCount < 10 && !user.in_global_rating) {
+            if (!isBlocked && user.coins >= 50) {
+                message += '\n\nПрисоединяйтесь к текущему раунду!';
+                keyboard.reply_markup.inline_keyboard.push([
+                    { text: '🎯 Участвовать за 50 монет', callback_data: 'join_global' }
+                ]);
+            }
+        }
+
+        if (currentRound) {
             keyboard.reply_markup.inline_keyboard.push([
                 { text: '👀 Оценить анкеты', callback_data: 'view_global_profiles' }
             ]);
