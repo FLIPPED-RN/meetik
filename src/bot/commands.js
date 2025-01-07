@@ -128,17 +128,13 @@ exports.whoRatedMeCommand = async (ctx) => {
 
 exports.globalRatingCommand = async (ctx) => {
     try {
-        const currentRound = await db.getCurrentGlobalRound();
         const user = await db.getUserProfile(ctx.from.id);
         const participantsCount = await db.getGlobalRatingParticipantsCount();
-
-        const endTime = new Date(currentRound.rating_end_time);
-        const timeLeft = Math.floor((endTime - new Date()) / 1000 / 60);
+        const currentRound = await db.getCurrentGlobalRound();
 
         let message = `🌍 *Глобальная оценка*\n\n`;
         message += `💰 Стоимость участия: 50 монет\n`;
         message += `💵 Ваш баланс: ${user.coins} монет\n`;
-        message += `⏰ До конца раунда: ${timeLeft} минут\n`;
         message += `👥 Участников: ${participantsCount}/10\n\n`;
         message += `🏆 Призы:\n`;
         message += `1 место: 500 монет\n`;
@@ -151,13 +147,18 @@ exports.globalRatingCommand = async (ctx) => {
             }
         };
 
-        if (user.in_global_rating) {
+        if (currentRound && user.in_global_rating) {
+            const endTime = new Date(currentRound.rating_end_time);
+            const timeLeft = Math.floor((endTime - new Date()) / 1000 / 60);
+            
             const stats = await db.getGlobalRatingParticipants();
             const userRank = stats.findIndex(p => p.user_id === user.user_id) + 1;
+            
+            message += `\n⏰ До конца раунда: ${timeLeft} минут`;
             message += `\n📊 Ваше текущее место: ${userRank}/${stats.length}`;
             message += `\n\n⏳ Ожидайте окончания раунда...`;
         } else if (participantsCount < 10) {
-            message += '\n\nНажмите кнопку ниже, чтобы принять участие!';
+            message += '\n\nНажмите кнопку ниже, чтобы начать новый раунд!';
             keyboard.reply_markup.inline_keyboard.push([
                 { text: '🎯 Участвовать за 50 монет', callback_data: 'join_global' },
                 { text: '👀 Оценить анкеты', callback_data: 'view_global_profiles' }

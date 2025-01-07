@@ -357,7 +357,24 @@ const db = {
                 throw new Error('Недостаточно монет для участия! Необходимо 50 монет.');
             }
 
-            // Списываем монеты
+            // Получаем текущий раунд
+            const currentRound = await client.query(`
+                SELECT * FROM global_rounds WHERE is_active = true
+            `);
+
+            // Если нет активного раунда, создаем новый
+            if (!currentRound.rows[0]) {
+                const now = new Date();
+                const ratingEnd = new Date(now.getTime() + 5 * 60000); // 5 минут на раунд
+
+                await client.query(`
+                    INSERT INTO global_rounds 
+                    (start_time, rating_end_time, is_active)
+                    VALUES ($1, $2, true)
+                `, [now, ratingEnd]);
+            }
+
+            // Списываем монеты и добавляем участника
             await client.query(`
                 UPDATE users 
                 SET coins = coins - 50,
@@ -381,13 +398,7 @@ const db = {
             ORDER BY start_time DESC 
             LIMIT 1
         `);
-        
-        // Если активного раунда нет, создаем новый
-        if (!result.rows[0]) {
-            return await db.createGlobalRound();
-        }
-        
-        return result.rows[0];
+        return result.rows[0]; // Возвращаем null если нет активного раунда
     },
 
     getGlobalRatingParticipants: async (excludeUserId = null) => {
