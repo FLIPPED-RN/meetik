@@ -6,7 +6,6 @@ async function start() {
     try {
         // Инициализация базы данных
         await db.initDb();
-        console.log('База данных инициализирована');
         
         // Запуск бота
         await startBot();

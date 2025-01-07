@@ -124,4 +124,57 @@ exports.whoRatedMeCommand = async (ctx) => {
         console.error('Ошибка при получении оценок:', error);
         await ctx.reply('Произошла ошибка при загрузке оценок.');
     }
-}; 
+};
+
+exports.globalRatingCommand = async (ctx) => {
+    try {
+        const currentRound = await db.getCurrentGlobalRound();
+        const user = await db.getUserProfile(ctx.from.id);
+        const participantsCount = await db.getGlobalRatingParticipantsCount();
+
+        const endTime = new Date(currentRound.rating_end_time);
+        const timeLeft = Math.floor((endTime - new Date()) / 1000 / 60);
+
+        let message = `🌍 *Глобальная оценка*\n\n`;
+        message += `💰 Стоимость участия: 50 монет\n`;
+        message += `💵 Ваш баланс: ${user.coins} монет\n`;
+        message += `⏰ До конца раунда: ${timeLeft} минут\n`;
+        message += `👥 Участников: ${participantsCount}/10\n\n`;
+        message += `🏆 Призы:\n`;
+        message += `1 место: 500 монет\n`;
+        message += `2 место: 300 монет\n`;
+        message += `3 место: 100 монет\n`;
+        
+        const keyboard = {
+            reply_markup: {
+                inline_keyboard: []
+            }
+        };
+
+        if (user.in_global_rating) {
+            const stats = await db.getGlobalRatingParticipants();
+            const userRank = stats.findIndex(p => p.user_id === user.user_id) + 1;
+            message += `\n📊 Ваше текущее место: ${userRank}/${stats.length}`;
+            message += `\n\n⏳ Ожидайте окончания раунда...`;
+        } else if (participantsCount < 10) {
+            message += '\n\nНажмите кнопку ниже, чтобы принять участие!';
+            keyboard.reply_markup.inline_keyboard.push([
+                { text: '🎯 Участвовать за 50 монет', callback_data: 'join_global' },
+                { text: '👀 Оценить анкеты', callback_data: 'view_global_profiles' }
+            ]);
+        } else {
+            message += '\n\n❌ Достигнуто максимальное количество участников';
+            keyboard.reply_markup.inline_keyboard.push([
+                { text: '👀 Оценить анкеты', callback_data: 'view_global_profiles' }
+            ]);
+        }
+
+        await ctx.reply(message, {
+            parse_mode: 'Markdown',
+            ...keyboard
+        });
+    } catch (error) {
+        console.error('Ошибка глобальной оценки:', error);
+        await ctx.reply('Произошла ошибка при загрузке глобальной оценки.');
+    }
+};

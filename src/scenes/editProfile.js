@@ -100,11 +100,42 @@ const editProfileScene = new Scenes.WizardScene(
                     break;
 
                 case 'edit_photos':
-                    if (!ctx.message?.photo || !validators.photo(ctx.message.photo[ctx.message.photo.length - 1])) {
-                        await ctx.reply('Некорректное фото. Максимальный размер - 5MB');
+                    // Обрабатываем нажатие кнопки "Готово"
+                    if (ctx.callbackQuery?.data === 'photos_done') {
+                        if (ctx.wizard.state.photos && ctx.wizard.state.photos.length > 0) {
+                            await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
+                            await ctx.reply('Фотографии сохранены!', mainMenu);
+                            return ctx.scene.leave();
+                        } else {
+                            await ctx.reply('Пожалуйста, отправьте хотя бы одну фотографию');
+                            return;
+                        }
+                    }
+
+                    if (!ctx.message?.photo) {
+                        await ctx.reply('Пожалуйста, отправьте фотографию');
                         return;
                     }
-                    await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
+                    
+                    if (!ctx.wizard.state.photos) {
+                        ctx.wizard.state.photos = [];
+                    }
+                    ctx.wizard.state.photos.push(ctx.message.photo[ctx.message.photo.length - 1].file_id);
+                    
+                    if (ctx.wizard.state.photos.length < 3) {
+                        await ctx.reply(`Фото ${ctx.wizard.state.photos.length} добавлено! Отправьте еще ${3 - ctx.wizard.state.photos.length} фото или нажмите кнопку "Готово"`, {
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: 'Готово', callback_data: 'photos_done' }
+                                ]]
+                            }
+                        });
+                        return;
+                    } else {
+                        await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
+                        await ctx.reply('Все фотографии загружены!', mainMenu);
+                        return ctx.scene.leave();
+                    }
                     break;
             }
 

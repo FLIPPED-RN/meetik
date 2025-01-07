@@ -44,3 +44,28 @@ exports.editProfileKeyboard = {
         ]
     }
 };
+
+exports.globalRatingKeyboard = {
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: '🌍 Участвовать в глобальной оценке', callback_data: 'join_global' }],
+            [{ text: '📊 Статус текущего раунда', callback_data: 'global_status' }],
+            [{ text: '🏆 Последние победители', callback_data: 'global_winners' }]
+        ]
+    }
+};
+
+exports.globalVotingKeyboard = (userId) => ({
+    reply_markup: {
+        inline_keyboard: [
+            Array.from({ length: 5 }, (_, i) => ({
+                text: `${i + 1}⭐️`,
+                callback_data: `global_vote_${userId}_${i + 1}`
+            })),
+            Array.from({ length: 5 }, (_, i) => ({
+                text: `${i + 6}⭐️`,
+                callback_data: `global_vote_${userId}_${i + 6}`
+            }))
+        ]
+    }
+});
