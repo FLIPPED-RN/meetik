@@ -17,7 +17,7 @@ const db = {
                     description TEXT,
                     username VARCHAR(255),
                     coins INTEGER DEFAULT 0,
-                    average_rating DECIMAL(4,2) DEFAULT 0,
+                    average_rating DECIMAL(5,2) DEFAULT 0,
                     last_win_time TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     in_global_rating BOOLEAN DEFAULT false,
@@ -35,7 +35,7 @@ const db = {
                     id SERIAL PRIMARY KEY,
                     from_user_id BIGINT REFERENCES users(user_id),
                     to_user_id BIGINT REFERENCES users(user_id),
-                    rating NUMERIC(3,1) CHECK (rating >= 1 AND rating <= 10),
+                    rating NUMERIC(4,1) CHECK (rating >= 1 AND rating <= 10),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     is_skip BOOLEAN DEFAULT false
                 );
@@ -179,6 +179,26 @@ const db = {
                 [fromUserId, targetId, rating]
             );
 
+            // Начисляем монеты в зависимости от рейтинга
+            let coinsToAdd = 0;
+            if (rating === 7) {
+                coinsToAdd = 2;
+            } else if (rating === 8) {
+                coinsToAdd = 3;
+            } else if (rating === 9) {
+                coinsToAdd = 4;
+            } else if (rating === 10) {
+                coinsToAdd = 5;
+            }
+
+            if (coinsToAdd > 0) {
+                await client.query(`
+                    UPDATE users 
+                    SET coins = COALESCE(coins, 0) + $1
+                    WHERE user_id = $2
+                `, [coinsToAdd, targetId]);
+            }
+
             // Обновляем средний рейтинг
             await client.query(`
                 UPDATE users 
@@ -301,6 +321,11 @@ const db = {
                 WHERE place <= 10
             `);
 
+            if (winners.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return [];
+            }
+
             for (const winner of winners.rows) {
                 if (winner.coins_won > 0) {
                     await client.query(`
@@ -333,6 +358,7 @@ const db = {
                 SELECT u.* FROM users u
                 LEFT JOIN ratings r ON u.user_id = r.to_user_id AND r.from_user_id = $1
                 WHERE u.user_id != $1 
+                AND u.in_global_rating = false  -- Исключаем участников глобальной оценки
                 AND r.rating IS NULL
                 ORDER BY RANDOM()
                 LIMIT 10
@@ -483,6 +509,13 @@ const db = {
             INSERT INTO global_votes (voter_id, candidate_id, round_id)
             VALUES ($1, $2, $3)
         `, [voterId, candidateId, currentRound.id]);
+
+        // Начисляем 10 баллов кандидату
+        await pool.query(`
+            UPDATE users 
+            SET coins = COALESCE(coins, 0) + 10
+            WHERE user_id = $2
+        `, [voterId, candidateId]);
     },
 
     finishGlobalRound: async () => {

@@ -197,7 +197,12 @@ exports.globalRatingCommand = async (ctx) => {
         message += `1 место: 500 монет\n`;
         message += `2 место: 300 монет\n`;
         message += `3 место: 100 монет\n`;
-        
+
+        // Уведомление о начале глобальной оценки
+        if (participantsCount === 1) {
+            await announceGlobalRatingStart(ctx);
+        }
+
         const keyboard = {
             reply_markup: {
                 inline_keyboard: []
@@ -235,7 +240,9 @@ exports.globalRatingCommand = async (ctx) => {
 
         if (currentRound) {
             keyboard.reply_markup.inline_keyboard.push([
-                { text: '👀 Оценить анкеты', callback_data: 'view_global_profiles' }
+                { text: '👀', callback_data: 'prev_profile' },
+                { text: '❤️', callback_data: 'vote_profile' },
+                { text: '👉', callback_data: 'next_profile' }
             ]);
         }
 
@@ -248,3 +255,59 @@ exports.globalRatingCommand = async (ctx) => {
         await ctx.reply('Произошла ошибка при загрузке глобальной оценки.');
     }
 };
+
+exports.balanceCommand = async (ctx) => {
+    try {
+        const user = await db.getUserProfile(ctx.from.id);
+        if (!user) {
+            return ctx.reply('Профиль не найден. Используйте /start для регистрации.');
+        }
+
+        const balanceText = `💰 *Ваш баланс: ${user.coins} монет*`;
+        await ctx.reply(balanceText, { parse_mode: 'Markdown' });
+    } catch (error) {
+        console.error('Ошибка при получении баланса:', error);
+        await ctx.reply('Произошла ошибка при загрузке баланса.');
+    }
+};
+
+async function announceGlobalRatingStart(ctx) {
+    const users = await db.getAllUsers();
+    const message = `🌟 *Внимание! Начался новый раунд глобальной оценки!*\n\n` +
+                    `🎯 Участвуйте в оценке одной из 10 анкет!`;
+
+    for (const user of users) {
+        try {
+            await ctx.telegram.sendMessage(user.user_id, message, {
+                parse_mode: 'Markdown'
+            });
+        } catch (error) {
+            console.error(`Ошибка отправки уведомления пользователю ${user.user_id}:`, error);
+        }
+    }
+}
+
+async function startGlobalRating(ctx) {
+    const user = await db.getUserProfile(ctx.from.id);
+    const participantsCount = await db.getGlobalRatingParticipantsCount();
+
+    // Проверяем, не заблокирован ли пользователь после победы
+    const isBlocked = user.last_global_win && 
+        (new Date(user.last_global_win).getTime() + 2 * 60 * 60 * 1000 > Date.now());
+
+    if (isBlocked) {
+        const minutesLeft = Math.ceil((new Date(user.last_global_win).getTime() + 2 * 60 * 60 * 1000 - Date.now()) / 60000);
+        return ctx.reply(`Вы недавно победили в глобальной оценке! Подождите ещё ${minutesLeft} минут для участия.`);
+    }
+
+    await db.joinGlobalRating(ctx.from.id);
+    await ctx.answerCbQuery('Вы успешно присоединились к глобальной оценке!');
+
+    // Проверяем количество участников
+    const updatedParticipantsCount = await db.getGlobalRatingParticipantsCount();
+    if (updatedParticipantsCount === 10) {
+        await announceGlobalRatingStart(ctx);
+    }
+
+    await commands.globalRatingCommand(ctx);
+}

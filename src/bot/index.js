@@ -26,6 +26,7 @@ bot.hears('🔍 Начать оценивать', commands.startRatingCommand);
 bot.hears('👑 Лидеры', commands.leadersCommand);
 bot.hears('⭐️ Кто меня оценил', commands.whoRatedMeCommand);
 bot.hears('🌍 Глобальный рейтинг', commands.globalRatingCommand);
+bot.hears('💰 Баланс', commands.balanceCommand);
 
 bot.action('edit_profile', async (ctx) => {
     await ctx.scene.enter('edit_profile');
@@ -131,8 +132,31 @@ async function startBot() {
             }
         }, 10000);
 
+        // Проверка на количество участников
+        setInterval(async () => {
+            const participantsCount = await db.getGlobalRatingParticipantsCount();
+            if (participantsCount >= 10) {
+                await notifyParticipantsReady();
+            }
+        }, 60000); // Проверяем каждую минуту
+
     } catch (error) {
         console.error('Ошибка при запуске бота:', error);
+    }
+}
+
+async function notifyParticipantsReady() {
+    const users = await db.getAllUsers();
+    const message = `🎉 Все 10 участников зарегистрировались! Теперь вы можете оценивать анкеты!`;
+
+    for (const user of users) {
+        try {
+            await bot.telegram.sendMessage(user.user_id, message, {
+                parse_mode: 'Markdown'
+            });
+        } catch (error) {
+            console.error(`Ошибка отправки уведомления пользователю ${user.user_id}:`, error);
+        }
     }
 }
 
@@ -202,19 +226,7 @@ bot.command('startglobalround', async (ctx) => {
 });
 
 bot.action('join_global', async (ctx) => {
-    try {
-        const participantsCount = await db.getGlobalRatingParticipantsCount();
-        if (participantsCount >= 10) {
-            await ctx.answerCbQuery('Достигнуто максимальное количество участников!');
-            return;
-        }
-
-        await db.joinGlobalRating(ctx.from.id);
-        await ctx.answerCbQuery('Вы успешно присоединились к глобальной оценке!');
-        await commands.globalRatingCommand(ctx);
-    } catch (error) {
-        await ctx.answerCbQuery(error.message);
-    }
+    await startGlobalRating(ctx);
 });
 
 bot.action('view_global_profiles', async (ctx) => {
@@ -333,6 +345,16 @@ async function showNextGlobalProfile(ctx) {
         }
     }
 }
+
+bot.action('vote_profile', async (ctx) => {
+    // Логика для голосования за анкету
+    const targetId = ctx.wizard.state.currentProfile.user_id;
+    await db.saveGlobalVote(ctx.from.id, targetId);
+    await ctx.answerCbQuery('Ваш голос учтен!');
+
+    // Логика для перехода к следующему профилю
+    await showNextGlobalProfile(ctx);
+});
 
 module.exports = {
     bot,
