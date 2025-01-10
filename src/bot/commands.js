@@ -2,6 +2,56 @@ const { mainMenu } = require('../utils/keyboards');
 const { formatDate } = require('../utils/helpers');
 const db = require('../database');
 
+async function sendProfileForRating(ctx, profile) {
+    try {
+        const photos = await db.getUserPhotos(profile.user_id);
+        const profileText = `👤 *Анкета для оценки:*
+📝 Имя: ${profile.name}
+🎂 Возраст: ${profile.age}
+🌆 Город: ${profile.city}
+${profile.description ? `\n📄 О себе: ${profile.description}` : ''}`;
+
+        const ratingKeyboard = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '1️⃣', callback_data: `rate_${profile.user_id}_1` },
+                        { text: '2️⃣', callback_data: `rate_${profile.user_id}_2` },
+                        { text: '3️⃣', callback_data: `rate_${profile.user_id}_3` },
+                        { text: '4️⃣', callback_data: `rate_${profile.user_id}_4` },
+                        { text: '5️⃣', callback_data: `rate_${profile.user_id}_5` }
+                    ],
+                    [
+                        { text: '6️⃣', callback_data: `rate_${profile.user_id}_6` },
+                        { text: '7️⃣', callback_data: `rate_${profile.user_id}_7` },
+                        { text: '8️⃣', callback_data: `rate_${profile.user_id}_8` },
+                        { text: '9️⃣', callback_data: `rate_${profile.user_id}_9` },
+                        { text: '🔟', callback_data: `rate_${profile.user_id}_10` }
+                    ]
+                ]
+            }
+        };
+
+        if (photos.length > 0) {
+            const mediaGroup = photos.map((photoId, index) => ({
+                type: 'photo',
+                media: photoId,
+                ...(index === 0 && { caption: profileText, parse_mode: 'Markdown' })
+            }));
+            await ctx.replyWithMediaGroup(mediaGroup);
+            await ctx.reply('Оцените анкету от 1 до 10:', ratingKeyboard);
+        } else {
+            await ctx.reply(profileText, {
+                parse_mode: 'Markdown',
+                ...ratingKeyboard
+            });
+        }
+    } catch (error) {
+        console.error('Ошибка при отправке анкеты:', error);
+        await ctx.reply('Произошла ошибка при загрузке анкеты.');
+    }
+}
+
 exports.startCommand = async (ctx) => {
     const user = await db.getUserProfile(ctx.from.id);
     if (!user) {
@@ -44,7 +94,7 @@ ${user.description ? `\n📄 О себе: ${user.description}` : ''}`;
             await ctx.replyWithMediaGroup(mediaGroup);
             await ctx.reply('Управление профилем:', editButton);
         } else {
-            await ctx.reply(profileText, { 
+            await ctx.reply(profileText, {
                 parse_mode: 'Markdown',
                 ...editButton
             });

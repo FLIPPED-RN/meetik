@@ -35,7 +35,7 @@ const db = {
                     id SERIAL PRIMARY KEY,
                     from_user_id BIGINT REFERENCES users(user_id),
                     to_user_id BIGINT REFERENCES users(user_id),
-                    rating INTEGER CHECK (rating >= 1 AND rating <= 10),
+                    rating NUMERIC(3,1) CHECK (rating >= 1 AND rating <= 10),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     is_skip BOOLEAN DEFAULT false
                 );
