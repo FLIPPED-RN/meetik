@@ -5,7 +5,6 @@ const db = require('../database');
 
 const editProfileScene = new Scenes.WizardScene(
     'edit_profile',
-    // Шаг 1: Показ текущего профиля и выбор что редактировать
     async (ctx) => {
         const user = await db.getUserProfile(ctx.from.id);
         if (!user) {
@@ -16,7 +15,6 @@ const editProfileScene = new Scenes.WizardScene(
         await ctx.reply('Что вы хотите изменить?', editProfileKeyboard);
         return ctx.wizard.next();
     },
-    // Шаг 2: Обработка выбора и запрос нового значения
     async (ctx) => {
         if (!ctx.callbackQuery) return;
 
@@ -54,7 +52,6 @@ const editProfileScene = new Scenes.WizardScene(
         }
         return ctx.wizard.next();
     },
-    // Шаг 3: Сохранение изменений
     async (ctx) => {
         const editField = ctx.wizard.state.editField;
 
@@ -100,7 +97,6 @@ const editProfileScene = new Scenes.WizardScene(
                     break;
 
                 case 'edit_photos':
-                    // Обрабатываем нажатие кнопки "Готово"
                     if (ctx.callbackQuery?.data === 'photos_done') {
                         if (ctx.wizard.state.photos && ctx.wizard.state.photos.length > 0) {
                             await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);

@@ -19,7 +19,7 @@ exports.rateLimit = async (ctx, next) => {
     
     if (global.rateLimit && global.rateLimit[userId]) {
         const diff = now - global.rateLimit[userId];
-        if (diff < 1000) { // 1 секунда
+        if (diff < 1000) {
             return;
         }
     }

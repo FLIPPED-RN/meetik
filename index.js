@@ -4,13 +4,13 @@ const db = require('./src/database');
 
 async function start() {
     try {
-        // Инициализация базы данных
+        // инициализация базы данных
         await db.initDb();
         
-        // Запуск бота
+        // запуск бота
         await startBot();
         
-        // Обработка завершения работы
+        // обработка завершения работы
         process.once('SIGINT', () => bot.stop('SIGINT'));
         process.once('SIGTERM', () => bot.stop('SIGTERM'));
         

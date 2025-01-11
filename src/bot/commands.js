@@ -1,6 +1,7 @@
 const { mainMenu } = require('../utils/keyboards');
 const { formatDate } = require('../utils/helpers');
 const db = require('../database');
+const commands = require('./index');
 
 async function sendProfileForRating(ctx, profile) {
     try {
@@ -61,7 +62,8 @@ ${profile.description ? `\n📄 О себе: ${profile.description}` : ''}`;
 exports.startCommand = async (ctx) => {
     const user = await db.getUserProfile(ctx.from.id);
     if (!user) {
-        await ctx.scene.enter('registration');
+        const username = ctx.from.username || null;
+        await ctx.scene.enter('registration', { username });
     } else {
         await ctx.reply('Добро пожаловать в главное меню!', mainMenu);
     }
@@ -150,7 +152,7 @@ exports.leadersCommand = async (ctx) => {
     }
 };
 
-exports.whoRatedMeCommand = async (ctx) => {
+exports.whoRatedMeCommand = (bot) => async (ctx) => {
     try {
         const ratings = await db.getLastRatings(ctx.from.id);
         
@@ -158,24 +160,80 @@ exports.whoRatedMeCommand = async (ctx) => {
             return ctx.reply('Пока никто не оценил ваш профиль.');
         }
 
-        let message = '🌟 *Последние оценки вашего профиля:*\n\n';
-        
+        let profiles = [];
+
         for (const rating of ratings) {
             const raterProfile = await db.getUserProfile(rating.from_user_id);
             if (raterProfile) {
-                message += `👤 *${raterProfile.name}*, ${raterProfile.age} лет\n` +
-                          `🌆 ${raterProfile.city}\n` +
-                          `⭐️ Оценка: ${rating.rating}/10\n` +
-                          `🕐 ${formatDate(rating.created_at)}\n`;
-                
-                if (rating.rating >= 7 && raterProfile.username) {
-                    message += `📱 @${raterProfile.username}\n`;
-                }
-                message += '\n';
+                profiles.push({
+                    name: raterProfile.name,
+                    age: raterProfile.age,
+                    city: raterProfile.city,
+                    rating: rating.rating,
+                    userId: raterProfile.user_id,
+                    username: raterProfile.username,
+                    photos: await db.getUserPhotos(raterProfile.user_id)
+                });
             }
         }
 
-        await ctx.reply(message, { parse_mode: 'Markdown' });
+        let currentIndex = 0;
+        const totalProfiles = profiles.length;
+
+        const escapeMarkdownV2 = (text) => {
+            return text.replace(/([_.*[\]()~`>#+\-=|{}.!])/g, '\\$1');
+        };
+
+        const sendProfile = () => {
+            const profile = profiles[currentIndex];
+            const profileMessage = `👤 *${escapeMarkdownV2(profile.name)}*, ${profile.age} лет\n` +
+                                   `🌆 ${escapeMarkdownV2(profile.city)}\n` +
+                                   `⭐️ Оценка: ${profile.rating}/10\n` +
+                                   `${profile.username ? `📱 Профиль @${escapeMarkdownV2(profile.username)}\n` : ''}`;
+
+            const replyMarkup = {
+                inline_keyboard: [
+                    [
+                        { text: '⬅️ Назад', callback_data: 'prev_profile' },
+                        { text: '➡️ Вперед', callback_data: 'next_profile' }
+                    ]
+                ]
+            };
+
+            if (profile.photos && profile.photos.length > 0) {
+                ctx.replyWithPhoto(profile.photos[0], {
+                    caption: profileMessage,
+                    parse_mode: 'MarkdownV2',
+                    reply_markup: replyMarkup
+                });
+            } else {
+                ctx.reply(profileMessage, {
+                    parse_mode: 'MarkdownV2',
+                    reply_markup: replyMarkup
+                });
+            }
+        };
+
+        sendProfile();
+
+        bot.action('prev_profile', async (ctx) => {
+            if (currentIndex > 0) {
+                currentIndex--;
+                sendProfile();
+            } else {
+                await ctx.answerCbQuery('Это первый профиль.');
+            }
+        });
+
+        bot.action('next_profile', async (ctx) => {
+            if (currentIndex < totalProfiles - 1) {
+                currentIndex++;
+                sendProfile();
+            } else {
+                await ctx.answerCbQuery('Это последний профиль.');
+            }
+        });
+
     } catch (error) {
         console.error('Ошибка при получении оценок:', error);
         await ctx.reply('Произошла ошибка при загрузке оценок.');
@@ -185,7 +243,6 @@ exports.whoRatedMeCommand = async (ctx) => {
 exports.globalRatingCommand = async (ctx) => {
     try {
         const user = await db.getUserProfile(ctx.from.id);
-        const participantsCount = await db.getGlobalRatingParticipantsCount();
         const currentRound = await db.getCurrentGlobalRound();
 
         // Проверяем, не заблокирован ли пользователь после победы
@@ -197,17 +254,11 @@ exports.globalRatingCommand = async (ctx) => {
 
         let message = `🌍 *Глобальная оценка*\n\n`;
         message += `💰 Стоимость участия: 50 монет\n`;
-        message += `💵 Ваш баланс: ${user.coins} монет\n`;
-        message += `👥 Участников: ${participantsCount}/10\n\n`;
+        message += `💵 Ваш баланс: ${user.coins} монет\n\n`;
         message += `🏆 Призы:\n`;
         message += `1 место: 500 монет\n`;
         message += `2 место: 300 монет\n`;
         message += `3 место: 100 монет\n`;
-
-        // Уведомление о начале глобальной оценки
-        if (participantsCount === 1) {
-            await announceGlobalRatingStart(ctx);
-        }
 
         const keyboard = {
             reply_markup: {
@@ -217,11 +268,7 @@ exports.globalRatingCommand = async (ctx) => {
 
         if (currentRound && user.in_global_rating) {
             const timeLeft = Math.ceil(currentRound.minutes_left);
-            const stats = await db.getGlobalRatingParticipants();
-            const userRank = stats.findIndex(p => p.user_id === user.user_id) + 1;
-            
             message += `\n⏰ До конца раунда: ${timeLeft} минут`;
-            message += `\n📊 Ваше текущее место: ${userRank}/${stats.length}`;
             message += `\n\n⏳ Ожидайте окончания раунда...`;
         } else if (!currentRound) {
             if (isBlocked) {
@@ -235,24 +282,7 @@ exports.globalRatingCommand = async (ctx) => {
             } else {
                 message += '\n\n❌ У вас недостаточно монет для участия';
             }
-        } else if (participantsCount < 10 && !user.in_global_rating) {
-            if (!isBlocked && user.coins >= 50) {
-                message += '\n\nПрисоединяйтесь к текущему раунду!';
-                keyboard.reply_markup.inline_keyboard.push([
-                    { text: '🎯 Участвовать за 50 монет', callback_data: 'join_global' }
-                ]);
-            }
         }
-
-        if (currentRound) {
-            keyboard.reply_markup.inline_keyboard.push([
-                { text: '👀', callback_data: 'prev_profile' },
-                { text: '❤️', callback_data: 'vote_profile' },
-                { text: '👉', callback_data: 'next_profile' }
-            ]);
-        }
-
-        message += `⏰ Время до конца раунда: ${currentRound.minutes_left} минут\n`;
 
         await ctx.reply(message, {
             parse_mode: 'Markdown',
@@ -299,7 +329,6 @@ async function startGlobalRating(ctx) {
     const user = await db.getUserProfile(ctx.from.id);
     const participantsCount = await db.getGlobalRatingParticipantsCount();
 
-    // Проверяем, не заблокирован ли пользователь после победы
     const isBlocked = user.last_global_win && 
         (new Date(user.last_global_win).getTime() + 2 * 60 * 60 * 1000 > Date.now());
 
@@ -311,21 +340,117 @@ async function startGlobalRating(ctx) {
     await db.joinGlobalRating(ctx.from.id);
     await ctx.answerCbQuery('Вы успешно присоединились к глобальной оценке!');
 
-    // Проверяем количество участников
     const updatedParticipantsCount = await db.getGlobalRatingParticipantsCount();
     if (updatedParticipantsCount === 10) {
-        await announceGlobalRatingStart(ctx);
-    }
-
-    await commands.globalRatingCommand(ctx);
-}
-
-async function sendTopProfiles(ctx) {
-    const topProfiles = await db.getTopProfiles();
-    for (const profile of topProfiles) {
-        await ctx.reply(`👤 *${profile.name}* - Рейтинг: ${profile.average_rating}`, {
-            parse_mode: 'Markdown',
-            reply_markup: keyboards.ratingKeyboard(profile.user_id)
-        });
     }
 }
+
+async function finishGlobalRound() {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        await client.query(`
+            UPDATE global_rounds 
+            SET is_active = false 
+            WHERE is_active = true
+        `);
+
+        const topParticipants = await client.query(`
+            SELECT u.*, COUNT(gv.voter_id) as votes_count
+            FROM users u
+            LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
+            WHERE u.in_global_rating = true
+            GROUP BY u.user_id
+            ORDER BY votes_count DESC, RANDOM()
+            LIMIT 10
+        `);
+
+        for (let i = 0; i < topParticipants.rows.length; i++) {
+            const participant = topParticipants.rows[i];
+            const coins = i === 0 ? 500 : i === 1 ? 300 : i === 2 ? 100 : 0;
+
+            if (coins > 0) {
+                await client.query(`
+                    UPDATE users 
+                    SET coins = coins + $1,
+                        last_global_win = CASE 
+                            WHEN $2 <= 2 THEN NOW() 
+                            ELSE last_global_win 
+                        END
+                    WHERE user_id = $3
+                `, [coins, i, participant.user_id]);
+            }
+        }
+
+        await client.query(`UPDATE users SET in_global_rating = false WHERE in_global_rating = true`);
+        await client.query(`DELETE FROM global_votes`);
+
+        await client.query('COMMIT');
+        return topParticipants.rows;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+exports.startGlobalRating = startGlobalRating;
+
+exports.viewProfileCommand = async (ctx) => {
+    const userId = ctx.callbackQuery.data.split('_')[2];
+    const profile = await db.getUserProfile(userId);
+    
+    if (profile) {
+        const profileText = `👤 *Профиль:*\n📝 Имя: ${profile.name}\n🎂 Возраст: ${profile.age}\n🌆 Город: ${profile.city}\n${profile.description ? `📄 О себе: ${profile.description}` : ''}`;
+        
+        const photos = await db.getUserPhotos(userId);
+        if (photos.length > 0) {
+            const mediaGroup = photos.map((photoId, index) => ({
+                type: 'photo',
+                media: photoId,
+                ...(index === 0 && { caption: profileText, parse_mode: 'Markdown' })
+            }));
+            await ctx.replyWithMediaGroup(mediaGroup);
+        } else {
+            await ctx.reply(profileText, { parse_mode: 'Markdown' });
+        }
+    } else {
+        await ctx.reply('Профиль не найден.');
+    }
+};
+
+exports.registerBotActions = (bot) => {
+    bot.action(/^rate_(\d+)_(\d+)$/, async (ctx) => {
+        try {
+            const [, targetId, rating] = ctx.match.map(Number);
+            const result = await db.saveRating(targetId, ctx.from.id, rating);
+            
+            await ctx.answerCbQuery('Оценка сохранена!');
+
+            if (result?.isMutualHigh) {
+                const targetUser = await db.getUserProfile(targetId);
+                await ctx.reply(`🎉 Взаимная симпатия!\n` +
+                              `${targetUser.name} тоже высоко оценил(а) вас!\n` +
+                              `${targetUser.username ? `Telegram: @${targetUser.username}` : ''}`);
+            }
+
+            // Если оценка от 7 до 10, показываем профиль
+            if (rating >= 7) {
+                await ctx.reply(`Вас высоко оценили! Вот ваш профиль:`);
+                await sendProfileForRating(ctx, result.targetProfile); // Показываем профиль
+            } else {
+                const nextProfile = await db.getNextProfile(ctx.from.id);
+                if (nextProfile) {
+                    await sendProfileForRating(ctx, nextProfile);
+                } else {
+                    await ctx.reply('На сегодня анкеты закончились. Приходите позже!', mainMenu);
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка при сохранении оценки:', error);
+            await ctx.answerCbQuery('Произошла ошибка при сохранении оценки');
+        }
+    });
+};

@@ -1,3 +1,5 @@
+const commands = require('../bot/commands');
+
 const validators = {
     name: (name) => {
         return typeof name === 'string' && 

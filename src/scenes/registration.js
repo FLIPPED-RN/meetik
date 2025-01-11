@@ -5,12 +5,10 @@ const db = require('../database');
 
 const registrationScene = new Scenes.WizardScene(
     'registration',
-    // Шаг 1: Запрос имени
     async (ctx) => {
         await ctx.reply('Добро пожаловать! Как вас зовут? (только буквы, 2-30 символов)');
         return ctx.wizard.next();
     },
-    // Шаг 2: Запрос возраста
     async (ctx) => {
         const name = ctx.message.text.trim();
         if (!validators.name(name)) {
@@ -21,7 +19,6 @@ const registrationScene = new Scenes.WizardScene(
         await ctx.reply('Сколько вам лет? (14-99)');
         return ctx.wizard.next();
     },
-    // Шаг 3: Запрос города
     async (ctx) => {
         const age = parseInt(ctx.message.text);
         if (!validators.age(age)) {
@@ -32,7 +29,6 @@ const registrationScene = new Scenes.WizardScene(
         await ctx.reply('Из какого вы города? (2-50 символов)');
         return ctx.wizard.next();
     },
-    // Шаг 4: Запрос пола
     async (ctx) => {
         const city = ctx.message.text.trim();
         if (!validators.city(city)) {
@@ -43,7 +39,6 @@ const registrationScene = new Scenes.WizardScene(
         await ctx.reply('Укажите ваш пол:', genderKeyboard);
         return ctx.wizard.next();
     },
-    // Шаг 5: Запрос предпочтений
     async (ctx) => {
         if (!ctx.callbackQuery || !['gender_male', 'gender_female'].includes(ctx.callbackQuery.data)) {
             await ctx.reply('Пожалуйста, выберите пол, используя кнопки выше');
@@ -55,7 +50,6 @@ const registrationScene = new Scenes.WizardScene(
         await ctx.reply('Кого вы хотите найти?', preferencesKeyboard);
         return ctx.wizard.next();
     },
-    // Шаг 6: Запрос фотографий
     async (ctx) => {
         if (!ctx.callbackQuery || !['pref_male', 'pref_female', 'pref_any'].includes(ctx.callbackQuery.data)) {
             await ctx.reply('Пожалуйста, выберите предпочтения, используя кнопки выше');
@@ -70,7 +64,6 @@ const registrationScene = new Scenes.WizardScene(
         await ctx.reply('Отправьте свою фотографию (минимум 1, максимум 3 фото)');
         return ctx.wizard.next();
     },
-    // Шаг 7: Обработка фотографий
     async (ctx) => {
         if (ctx.message?.photo) {
             const photo = ctx.message.photo[ctx.message.photo.length - 1];
@@ -113,7 +106,6 @@ const registrationScene = new Scenes.WizardScene(
             }
         }
     },
-    // Шаг 8: Обработка описания и завершение регистрации
     async (ctx) => {
         if (ctx.callbackQuery && ctx.callbackQuery.data === 'skip_description') {
             ctx.wizard.state.description = '';
@@ -136,7 +128,8 @@ const registrationScene = new Scenes.WizardScene(
             gender: ctx.wizard.state.gender,
             preferences: ctx.wizard.state.preferences,
             photos: ctx.wizard.state.photos,
-            description: ctx.wizard.state.description
+            description: ctx.wizard.state.description,
+            username: ctx.scene.state.username
         };
 
         try {

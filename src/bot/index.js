@@ -7,24 +7,20 @@ const { mainMenu } = require('../utils/keyboards');
 const db = require('../database');
 
 const bot = new Telegraf(config.BOT_TOKEN);
-
-// Создаем менеджер сцен
 const stage = new Scenes.Stage([registrationScene, editProfileScene]);
 
-// Middleware
 bot.use(session());
 bot.use(stage.middleware());
 bot.use(middleware.errorHandler);
 bot.use(middleware.userCheck);
 bot.use(middleware.rateLimit);
 
-// Команды
 bot.command('start', commands.startCommand);
 bot.command('global', commands.globalRatingCommand);
 bot.hears('👤 Мой профиль', commands.profileCommand);
 bot.hears('🔍 Начать оценивать', commands.startRatingCommand);
 bot.hears('👑 Лидеры', commands.leadersCommand);
-bot.hears('⭐️ Кто меня оценил', commands.whoRatedMeCommand);
+bot.hears('⭐️ Кто меня оценил', commands.whoRatedMeCommand(bot));
 bot.hears('🌍 Глобальный рейтинг', commands.globalRatingCommand);
 bot.hears('💰 Баланс', commands.balanceCommand);
 
@@ -32,78 +28,7 @@ bot.action('edit_profile', async (ctx) => {
     await ctx.scene.enter('edit_profile');
 });
 
-bot.action(/^rate_(\d+)_(\d+)$/, async (ctx) => {
-    try {
-        const [, targetId, rating] = ctx.match.map(Number);
-        const result = await db.saveRating(targetId, ctx.from.id, rating);
-        
-        await ctx.answerCbQuery('Оценка сохранена!');
-        
-        if (result?.isMutualHigh) {
-            const targetUser = await db.getUserProfile(targetId);
-            await ctx.reply(`🎉 Взаимная симпатия!\n` +
-                          `${targetUser.name} тоже высоко оценил(а) вас!\n` +
-                          `${targetUser.username ? `Telegram: @${targetUser.username}` : ''}`);
-        }
-        
-        const nextProfile = await db.getNextProfile(ctx.from.id);
-        if (nextProfile) {
-            await sendProfileForRating(ctx, nextProfile);
-        } else {
-            await ctx.reply('На сегодня анкеты закончились. Приходите позже!', mainMenu);
-        }
-    } catch (error) {
-        console.error('Ошибка при сохранении оценки:', error);
-        await ctx.answerCbQuery('Произошла ошибка при сохранении оценки');
-    }
-});
-
-bot.action('skip_profile', async (ctx) => {
-    try {
-        const nextProfile = await db.getNextProfile(ctx.from.id);
-        if (nextProfile) {
-            await sendProfileForRating(ctx, nextProfile);
-        } else {
-            await ctx.reply('На сегодня анкеты закончились. Приходите позже!', mainMenu);
-        }
-    } catch (error) {
-        console.error('Ошибка при пропуске профиля:', error);
-        await ctx.answerCbQuery('Произошла ошибка');
-    }
-});
-
-async function sendProfileForRating(ctx, profile) {
-    const ratingKeyboard = {
-        inline_keyboard: [
-            Array.from({ length: 5 }, (_, i) => ({
-                text: `${i + 1}⭐️`,
-                callback_data: `rate_${profile.user_id}_${i + 1}`
-            })),
-            Array.from({ length: 5 }, (_, i) => ({
-                text: `${i + 6}⭐️`,
-                callback_data: `rate_${profile.user_id}_${i + 6}`
-            })),
-            [{ text: '⏩ Пропустить', callback_data: 'skip_profile' }]
-        ]
-    };
-
-    const caption = `👤 *${profile.name}*, ${profile.age}\n` +
-                   `🌆 ${profile.city}\n` +
-                   `${profile.description ? `📝 ${profile.description}\n` : ''}`;
-
-    if (profile.photos && profile.photos.length > 0) {
-        await ctx.replyWithPhoto(profile.photos[0], {
-            caption: caption,
-            parse_mode: 'Markdown',
-            reply_markup: ratingKeyboard
-        });
-    } else {
-        await ctx.reply(caption, {
-            parse_mode: 'Markdown',
-            reply_markup: ratingKeyboard
-        });
-    }
-}
+commands.registerBotActions(bot);
 
 async function startBot() {
     try {
@@ -132,13 +57,12 @@ async function startBot() {
             }
         }, 10000);
 
-        // Проверка на количество участников
         setInterval(async () => {
             const participantsCount = await db.getGlobalRatingParticipantsCount();
             if (participantsCount >= 10) {
                 await notifyParticipantsReady();
             }
-        }, 60000); // Проверяем каждую минуту
+        }, 60000);
 
     } catch (error) {
         console.error('Ошибка при запуске бота:', error);
@@ -163,24 +87,6 @@ async function notifyParticipantsReady() {
 async function announceGlobalRating(bot) {
     try {
         const users = await db.getAllUsers();
-        const message = `🌟 *Внимание! Начался новый раунд глобальной оценки!*\n\n` +
-                       `🎯 Стоимость участия: 50 монет\n` +
-                       `🎯 Успейте принять участие и получить шанс выиграть:\n` +
-                       `👑 Первое место - 500 монет\n` +
-                       `🥈 Второе место - 300 монет\n` +
-                       `🥉 Третье место - 100 монет\n\n` +
-                       `Нажмите /global или кнопку "🌍 Глобальный рейтинг" чтобы участвовать!`;
-
-        for (const user of users) {
-            try {
-                await bot.telegram.sendMessage(user.user_id, message, {
-                    parse_mode: 'Markdown'
-                });
-            } catch (error) {
-                console.error(`Ошибка отправки объявления пользователю ${user.user_id}:`, error);
-            }
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
     } catch (error) {
         console.error('Ошибка при отправке объявлений:', error);
     }
@@ -191,7 +97,6 @@ setInterval(async () => {
         const currentRound = await db.getCurrentGlobalRound();
         if (!currentRound || new Date(currentRound.rating_end_time) <= new Date()) {
             const winners = await db.finishGlobalRound();
-            // Отправляем сообщения победителям
             for (let i = 0; i < Math.min(3, winners.length); i++) {
                 const winner = winners[i];
                 const coins = i === 0 ? 500 : i === 1 ? 300 : i === 2 ? 100 : 0;
@@ -200,7 +105,6 @@ setInterval(async () => {
                     `🎉 Поздравляем! Вы заняли ${i + 1} место в глобальной оценке и получили ${coins} монет!`
                 );
             }
-            // Отправляем топ-10 анкет всем пользователям
             const topProfiles = await db.getTopProfiles();
             for (const user of await db.getAllUsers()) {
                 await bot.telegram.sendMessage(user.user_id, `🏆 Топ-10 анкет:\n${topProfiles.map(p => `${p.name}: ${p.average_rating}`).join('\n')}`);
@@ -211,11 +115,10 @@ setInterval(async () => {
     } catch (error) {
         console.error('Ошибка обновления глобального раунда:', error);
     }
-}, 30 * 60 * 1000); // 5 минут
+}, 30 * 60 * 1000);
 
-// Добавляем команду для ручного запуска глобального раунда (для администраторов)
 bot.command('startglobalround', async (ctx) => {
-    if (ctx.from.id === config.ADMIN_ID) { // Убедитесь, что у вас есть ADMIN_ID в конфиге
+    if (ctx.from.id === config.ADMIN_ID) {
         try {
             await db.createGlobalRound();
             await announceGlobalRating(bot);
@@ -228,13 +131,13 @@ bot.command('startglobalround', async (ctx) => {
 });
 
 bot.action('join_global', async (ctx) => {
-    await startGlobalRating(ctx);
+    await commands.startGlobalRating(ctx);
 });
 
 bot.action('view_global_profiles', async (ctx) => {
     try {
-        const profiles = await db.getGlobalRatingParticipants();
-        const currentProfile = profiles[0]; // Показываем первый профиль
+        const profiles = await db.getGlobalRatingParticipants(ctx.from.id);
+        const currentProfile = profiles[0];
 
         if (!currentProfile) {
             await ctx.reply('Нет доступных анкет для оценки.');
@@ -282,10 +185,14 @@ bot.action(/^vote_global_(\d+)$/, async (ctx) => {
             return;
         }
 
+        const alreadyVoted = await db.checkIfVoted(voterId, targetId);
+        if (alreadyVoted) {
+            await ctx.answerCbQuery('Вы уже голосовали за эту анкету');
+            return;
+        }
+
         await db.saveGlobalVote(voterId, targetId);
         await ctx.answerCbQuery('Ваш голос учтен!');
-        
-        // Показываем следующий профиль
         await showNextGlobalProfile(ctx);
     } catch (error) {
         console.error('Ошибка при голосовании:', error);
@@ -302,7 +209,6 @@ bot.action('next_global_profile', async (ctx) => {
     }
 });
 
-// Добавьте вспомогательную функцию для показа следующего профиля
 async function showNextGlobalProfile(ctx) {
     const voterId = ctx.from.id;
     const profiles = await db.getGlobalRatingParticipants(voterId);
@@ -332,7 +238,6 @@ async function showNextGlobalProfile(ctx) {
             reply_markup: keyboard
         });
     } catch (error) {
-        // Если не удалось отредактировать сообщение, отправляем новое
         if (currentProfile.photos && currentProfile.photos.length > 0) {
             await ctx.replyWithPhoto(currentProfile.photos[0], {
                 caption: caption,
@@ -349,12 +254,9 @@ async function showNextGlobalProfile(ctx) {
 }
 
 bot.action('vote_profile', async (ctx) => {
-    // Логика для голосования за анкету
     const targetId = ctx.wizard.state.currentProfile.user_id;
     await db.saveGlobalVote(ctx.from.id, targetId);
     await ctx.answerCbQuery('Ваш голос учтен!');
-
-    // Логика для перехода к следующему профилю
     await showNextGlobalProfile(ctx);
 });
 
