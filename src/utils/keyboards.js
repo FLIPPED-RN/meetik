@@ -77,3 +77,9 @@ exports.ratingKeyboard = (userId) => ({
         ]))
     }
 });
+
+exports.viewProfileButton = {
+    reply_markup: {
+        inline_keyboard: [[{ text: 'Посмотреть еще', callback_data: `next_profile` }]]
+    }
+};

@@ -1,5 +1,6 @@
 const { mainMenu } = require('../utils/keyboards');
 const { formatDate } = require('../utils/helpers');
+const { viewProfileButton } = require('../utils/keyboards');
 const db = require('../database');
 const commands = require('./index');
 
@@ -28,6 +29,16 @@ ${profile.description ? `\n📄 О себе: ${profile.description}` : ''}`;
                         { text: '8️⃣', callback_data: `rate_${profile.user_id}_8` },
                         { text: '9️⃣', callback_data: `rate_${profile.user_id}_9` },
                         { text: '🔟', callback_data: `rate_${profile.user_id}_10` }
+                    ]
+                ]
+            }
+        };
+
+        const viewProfileButton = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '👤 Посмотреть профиль', callback_data: `view_profile_${profile.user_id}` }
                     ]
                 ]
             }
@@ -85,26 +96,30 @@ exports.profileCommand = async (ctx) => {
 👥 Пол: ${user.gender === 'male' ? 'Мужской' : 'Женский'}
 ${user.description ? `\n📄 О себе: ${user.description}` : ''}`;
 
-        const editButton = {
+        const mediaGroup = photos.map((photoId, index) => ({
+            type: 'photo',
+            media: photoId,
+            ...(index === 0 && { caption: profileText, parse_mode: 'Markdown' })
+        }));
+
+        const replyOptions = {
+            parse_mode: 'Markdown',
             reply_markup: {
-                inline_keyboard: [[
-                    { text: '✏️ Редактировать профиль', callback_data: 'edit_profile' }
-                ]]
+                inline_keyboard: [
+                    [
+                        { text: '✏️ Редактировать профиль', callback_data: 'edit_profile' }
+                    ]
+                ]
             }
         };
 
         if (photos.length > 0) {
-            const mediaGroup = photos.map((photoId, index) => ({
-                type: 'photo',
-                media: photoId,
-                ...(index === 0 && { caption: profileText, parse_mode: 'Markdown' })
-            }));
             await ctx.replyWithMediaGroup(mediaGroup);
-            await ctx.reply('Управление профилем:', editButton);
+            await ctx.reply('Управление профилем:', replyOptions);
         } else {
             await ctx.reply(profileText, {
                 parse_mode: 'Markdown',
-                ...editButton
+                ...replyOptions
             });
         }
     } catch (error) {
@@ -160,78 +175,50 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
             return ctx.reply('Пока никто не оценил ваш профиль.');
         }
 
-        let profiles = [];
+        const uniqueUserIds = new Set(); // Используем Set для уникальности
+        let currentIndex = 0; // Индекс текущей анкеты
 
-        for (const rating of ratings) {
-            const raterProfile = await db.getUserProfile(rating.from_user_id);
-            if (raterProfile) {
-                profiles.push({
-                    name: raterProfile.name,
-                    age: raterProfile.age,
-                    city: raterProfile.city,
-                    rating: rating.rating,
-                    userId: raterProfile.user_id,
-                    username: raterProfile.username,
-                    photos: await db.getUserPhotos(raterProfile.user_id)
-                });
+        const showNextRating = async () => {
+            if (currentIndex >= ratings.length) {
+                return ctx.reply('На сегодня анкеты закончились.');
             }
-        }
 
-        let currentIndex = 0;
-        const totalProfiles = profiles.length;
-
-        const escapeMarkdownV2 = (text) => {
-            return text.replace(/([_.*[\]()~`>#+\-=|{}.!])/g, '\\$1');
-        };
-
-        const sendProfile = () => {
-            const profile = profiles[currentIndex];
-            const profileMessage = `👤 *${escapeMarkdownV2(profile.name)}*, ${profile.age} лет\n` +
-                                   `🌆 ${escapeMarkdownV2(profile.city)}\n` +
-                                   `⭐️ Оценка: ${profile.rating}/10\n` +
-                                   `${profile.username ? `📱 Профиль @${escapeMarkdownV2(profile.username)}\n` : ''}`;
-
-            const replyMarkup = {
-                inline_keyboard: [
-                    [
-                        { text: '⬅️ Назад', callback_data: 'prev_profile' },
-                        { text: '➡️ Вперед', callback_data: 'next_profile' }
-                    ]
-                ]
-            };
-
-            if (profile.photos && profile.photos.length > 0) {
-                ctx.replyWithPhoto(profile.photos[0], {
-                    caption: profileMessage,
-                    parse_mode: 'MarkdownV2',
-                    reply_markup: replyMarkup
-                });
+            const rating = ratings[currentIndex];
+            if (!uniqueUserIds.has(rating.from_user_id)) { // Проверяем уникальность
+                uniqueUserIds.add(rating.from_user_id);
+                const raterProfile = await db.getUserProfile(rating.from_user_id);
+                if (raterProfile) {
+                    const photos = await db.getUserPhotos(raterProfile.user_id);
+                    if (photos.length > 0) {
+                        const mediaGroup = photos.map((photoId, index) => ({
+                            type: 'photo',
+                            media: photoId,
+                            ...(index === 0 && { caption: `👤 *${raterProfile.name.replace(/([_*[\]()~`>#+\-.!])/g, '\\$1')}*, ${raterProfile.age} лет\n🌆 ${raterProfile.city}\n⭐️ Оценка: ${rating.rating}/10\n${raterProfile.username ? `📱 Профиль @${raterProfile.username.replace(/([_*[\]()~`>#+\-.!])/g, '\\$1')}\n` : ''}`, parse_mode: 'MarkdownV2' })
+                        }));
+                        await ctx.replyWithMediaGroup(mediaGroup);
+                    } else {
+                        await ctx.reply(`👤 *${raterProfile.name}*, ${raterProfile.age} лет\n🌆 ${raterProfile.city}\n⭐️ Оценка: ${rating.rating}/10\n${raterProfile.username ? `📱 Профиль @${raterProfile.username}\n` : ''}`, {
+                            parse_mode: 'MarkdownV2',
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: 'Показать еще', callback_data: 'show_next_rating' }
+                                ]]
+                            }
+                        });
+                    }
+                    currentIndex++; // Увеличиваем индекс для следующей анкеты
+                }
             } else {
-                ctx.reply(profileMessage, {
-                    parse_mode: 'MarkdownV2',
-                    reply_markup: replyMarkup
-                });
+                currentIndex++; // Пропускаем, если уже показывали
+                await showNextRating(); // Рекурсивно показываем следующую анкету
             }
         };
 
-        sendProfile();
+        await showNextRating(); // Начинаем показывать анкеты
 
-        bot.action('prev_profile', async (ctx) => {
-            if (currentIndex > 0) {
-                currentIndex--;
-                sendProfile();
-            } else {
-                await ctx.answerCbQuery('Это первый профиль.');
-            }
-        });
-
-        bot.action('next_profile', async (ctx) => {
-            if (currentIndex < totalProfiles - 1) {
-                currentIndex++;
-                sendProfile();
-            } else {
-                await ctx.answerCbQuery('Это последний профиль.');
-            }
+        bot.action('show_next_rating', async (ctx) => {
+            await ctx.answerCbQuery(); // Подтверждаем нажатие кнопки
+            await showNextRating(); // Показываем следующую анкету
         });
 
     } catch (error) {
