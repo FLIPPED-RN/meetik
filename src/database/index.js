@@ -17,7 +17,7 @@ const db = {
                     description TEXT,
                     username VARCHAR(255),
                     coins INTEGER DEFAULT 0,
-                    average_rating DECIMAL(5,2) DEFAULT 0,
+                    average_rating DECIMAL(3,2) DEFAULT 0,
                     last_win_time TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     in_global_rating BOOLEAN DEFAULT false,
@@ -35,7 +35,7 @@ const db = {
                     id SERIAL PRIMARY KEY,
                     from_user_id BIGINT REFERENCES users(user_id),
                     to_user_id BIGINT REFERENCES users(user_id),
-                    rating NUMERIC(4,1) CHECK (rating >= 1 AND rating <= 10),
+                    rating NUMERIC(3.2) CHECK (rating >= 1 AND rating <= 10),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     is_skip BOOLEAN DEFAULT false
                 );
@@ -617,6 +617,24 @@ const db = {
 
     getAllUsers: async () => {
         const result = await pool.query('SELECT user_id FROM users');
+        return result.rows;
+    },
+
+    isUserInGlobalRating: async (userId) => {
+        const result = await pool.query(`
+            SELECT in_global_rating FROM users WHERE user_id = $1
+        `, [userId]);
+        return result.rows[0]?.in_global_rating;
+    },
+
+    getTopProfiles: async () => {
+        const result = await pool.query(`
+            SELECT user_id, name, average_rating
+            FROM users
+            WHERE average_rating > 0
+            ORDER BY average_rating DESC
+            LIMIT 10
+        `);
         return result.rows;
     }
 };

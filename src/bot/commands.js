@@ -32,6 +32,12 @@ ${profile.description ? `\n📄 О себе: ${profile.description}` : ''}`;
             }
         };
 
+        const isGlobalParticipant = await db.isUserInGlobalRating(ctx.from.id);
+        if (isGlobalParticipant) {
+            await ctx.reply('Вы не можете оценивать анкеты во время глобальной оценки.');
+            return;
+        }
+
         if (photos.length > 0) {
             const mediaGroup = photos.map((photoId, index) => ({
                 type: 'photo',
@@ -246,6 +252,8 @@ exports.globalRatingCommand = async (ctx) => {
             ]);
         }
 
+        message += `⏰ Время до конца раунда: ${currentRound.minutes_left} минут\n`;
+
         await ctx.reply(message, {
             parse_mode: 'Markdown',
             ...keyboard
@@ -310,4 +318,14 @@ async function startGlobalRating(ctx) {
     }
 
     await commands.globalRatingCommand(ctx);
+}
+
+async function sendTopProfiles(ctx) {
+    const topProfiles = await db.getTopProfiles();
+    for (const profile of topProfiles) {
+        await ctx.reply(`👤 *${profile.name}* - Рейтинг: ${profile.average_rating}`, {
+            parse_mode: 'Markdown',
+            reply_markup: keyboards.ratingKeyboard(profile.user_id)
+        });
+    }
 }

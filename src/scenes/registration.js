@@ -136,8 +136,7 @@ const registrationScene = new Scenes.WizardScene(
             gender: ctx.wizard.state.gender,
             preferences: ctx.wizard.state.preferences,
             photos: ctx.wizard.state.photos,
-            description: ctx.wizard.state.description,
-            username
+            description: ctx.wizard.state.description
         };
 
         try {

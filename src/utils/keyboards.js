@@ -69,3 +69,11 @@ exports.globalVotingKeyboard = (userId) => ({
         ]
     }
 });
+
+exports.ratingKeyboard = (userId) => ({
+    reply_markup: {
+        inline_keyboard: Array.from({ length: 10 }, (_, i) => ([
+            { text: `${i + 1}`, callback_data: `rate_profile_${userId}_${i + 1}` }
+        ]))
+    }
+});

@@ -191,7 +191,6 @@ setInterval(async () => {
         const currentRound = await db.getCurrentGlobalRound();
         if (!currentRound || new Date(currentRound.rating_end_time) <= new Date()) {
             const winners = await db.finishGlobalRound();
-            
             // Отправляем сообщения победителям
             for (let i = 0; i < Math.min(3, winners.length); i++) {
                 const winner = winners[i];
@@ -201,15 +200,18 @@ setInterval(async () => {
                     `🎉 Поздравляем! Вы заняли ${i + 1} место в глобальной оценке и получили ${coins} монет!`
                 );
             }
-
-            // Создаем новый раунд и отправляем объявление
+            // Отправляем топ-10 анкет всем пользователям
+            const topProfiles = await db.getTopProfiles();
+            for (const user of await db.getAllUsers()) {
+                await bot.telegram.sendMessage(user.user_id, `🏆 Топ-10 анкет:\n${topProfiles.map(p => `${p.name}: ${p.average_rating}`).join('\n')}`);
+            }
             await db.createGlobalRound();
             await announceGlobalRating(bot);
         }
     } catch (error) {
         console.error('Ошибка обновления глобального раунда:', error);
     }
-}, 5 * 60 * 1000); // 5 минут
+}, 30 * 60 * 1000); // 5 минут
 
 // Добавляем команду для ручного запуска глобального раунда (для администраторов)
 bot.command('startglobalround', async (ctx) => {
