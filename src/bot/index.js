@@ -84,44 +84,53 @@ async function notifyParticipantsReady() {
     }
 }
 
-async function announceGlobalRating(bot) {
-    try {
-        const users = await db.getAllUsers();
-    } catch (error) {
-        console.error('Ошибка при отправке объявлений:', error);
-    }
-}
-
 setInterval(async () => {
     try {
         const currentRound = await db.getCurrentGlobalRound();
-        if (!currentRound || new Date(currentRound.rating_end_time) <= new Date()) {
-            const winners = await db.finishGlobalRound();
-            for (let i = 0; i < Math.min(3, winners.length); i++) {
-                const winner = winners[i];
-                const coins = i === 0 ? 500 : i === 1 ? 300 : i === 2 ? 100 : 0;
-                await bot.telegram.sendMessage(
-                    winner.user_id,
-                    `🎉 Поздравляем! Вы заняли ${i + 1} место в глобальной оценке и получили ${coins} монет!`
-                );
+        if (currentRound && new Date(currentRound.rating_end_time) <= new Date()) {
+            const topProfiles = await db.getTopProfilesByRatings();
+            
+            const users = await db.getAllUsers();
+            for (const user of users) {
+                if (!await db.isUserInGlobalRating(user.user_id)) {
+                    for (const profile of topProfiles) {
+                        try {
+                            await sendProfileForFinalVoting(bot, user.user_id, profile);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        } catch (error) {
+                            console.error(`Ошибка отправки анкеты пользователю ${user.user_id}:`, error);
+                        }
+                    }
+                }
             }
-            const topProfiles = await db.getTopProfiles();
-            for (const user of await db.getAllUsers()) {
-                await bot.telegram.sendMessage(user.user_id, `🏆 Топ-10 анкет:\n${topProfiles.map(p => `${p.name}: ${p.average_rating}`).join('\n')}`);
-            }
-            await db.createGlobalRound();
-            await announceGlobalRating(bot);
+
+            setTimeout(async () => {
+                const winners = await db.finishGlobalRound();
+                for (let i = 0; i < Math.min(3, winners.length); i++) {
+                    const winner = winners[i];
+                    const coins = i === 0 ? 500 : i === 1 ? 300 : i === 2 ? 100 : 0;
+                    try {
+                        await bot.telegram.sendMessage(
+                            winner.user_id,
+                            `🎉 Поздравляем! Вы заняли ${i + 1} место в глобальной оценке и получили ${coins} монет!`
+                        );
+                    } catch (error) {
+                        console.error(`Ошибка отправки уведомления победителю ${winner.user_id}:`, error);
+                    }
+                }
+
+                await db.createGlobalRound();
+            }, 5 * 60 * 1000);
         }
     } catch (error) {
         console.error('Ошибка обновления глобального раунда:', error);
     }
-}, 30 * 60 * 1000);
+}, 60 * 1000);
 
 bot.command('startglobalround', async (ctx) => {
     if (ctx.from.id === config.ADMIN_ID) {
         try {
             await db.createGlobalRound();
-            await announceGlobalRating(bot);
             await ctx.reply('Новый глобальный раунд успешно запущен!');
         } catch (error) {
             console.error('Ошибка запуска глобального раунда:', error);
@@ -258,6 +267,66 @@ bot.action('vote_profile', async (ctx) => {
     await db.saveGlobalVote(ctx.from.id, targetId);
     await ctx.answerCbQuery('Ваш голос учтен!');
     await showNextGlobalProfile(ctx);
+});
+
+async function sendProfileForFinalVoting(bot, userId, profile) {
+    try {
+        const photos = await db.getUserPhotos(profile.user_id);
+        const profileText = `👤 *Анкета для финального голосования:*\n` +
+                          `📝 Имя: ${profile.name}\n` +
+                          `🎂 Возраст: ${profile.age}\n` +
+                          `🌆 Город: ${profile.city}\n` +
+                          `${profile.description ? `\n📄 О себе: ${profile.description}` : ''}`;
+
+        const ratingKeyboard = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '1️⃣', callback_data: `final_vote_${profile.user_id}_1` },
+                        { text: '2️⃣', callback_data: `final_vote_${profile.user_id}_2` },
+                        { text: '3️⃣', callback_data: `final_vote_${profile.user_id}_3` },
+                        { text: '4️⃣', callback_data: `final_vote_${profile.user_id}_4` },
+                        { text: '5️⃣', callback_data: `final_vote_${profile.user_id}_5` }
+                    ],
+                    [
+                        { text: '6️⃣', callback_data: `final_vote_${profile.user_id}_6` },
+                        { text: '7️⃣', callback_data: `final_vote_${profile.user_id}_7` },
+                        { text: '8️⃣', callback_data: `final_vote_${profile.user_id}_8` },
+                        { text: '9️⃣', callback_data: `final_vote_${profile.user_id}_9` },
+                        { text: '🔟', callback_data: `final_vote_${profile.user_id}_10` }
+                    ]
+                ]
+            }
+        };
+
+        if (photos.length > 0) {
+            const mediaGroup = photos.map((photoId, index) => ({
+                type: 'photo',
+                media: photoId,
+                ...(index === 0 && { caption: profileText, parse_mode: 'Markdown' })
+            }));
+            await bot.telegram.sendMediaGroup(userId, mediaGroup);
+            await bot.telegram.sendMessage(userId, 'Оцените анкету от 1 до 10:', ratingKeyboard);
+        } else {
+            await bot.telegram.sendMessage(userId, profileText, {
+                parse_mode: 'Markdown',
+                ...ratingKeyboard
+            });
+        }
+    } catch (error) {
+        console.error('Ошибка при отправке анкеты для финального голосования:', error);
+    }
+}
+
+bot.action(/^final_vote_(\d+)_(\d+)$/, async (ctx) => {
+    try {
+        const [, targetId, rating] = ctx.match.map(Number);
+        await db.saveFinalVote(targetId, ctx.from.id, rating);
+        await ctx.answerCbQuery('Ваш голос учтен!');
+    } catch (error) {
+        console.error('Ошибка при сохранении финального голоса:', error);
+        await ctx.answerCbQuery('Произошла ошибка при сохранении голоса');
+    }
 });
 
 module.exports = {

@@ -130,6 +130,11 @@ ${user.description ? `\n📄 О себе: ${user.description}` : ''}`;
 
 exports.startRatingCommand = async (ctx) => {
     try {
+        const userInGlobal = await db.isUserInGlobalRating(ctx.from.id);
+        if (userInGlobal) {
+            return ctx.reply('Вы не можете оценивать анкеты, пока участвуете в глобальной оценке.');
+        }
+
         const profiles = await db.getProfilesForRating(ctx.from.id);
         
         if (!profiles || profiles.length === 0) {
@@ -232,7 +237,7 @@ exports.globalRatingCommand = async (ctx) => {
         const user = await db.getUserProfile(ctx.from.id);
         const currentRound = await db.getCurrentGlobalRound();
 
-        // Проверяем, не заблокирован ли пользователь после победы
+        // Проверяем блокировку после победы
         const isBlocked = user.last_global_win && 
             (new Date(user.last_global_win).getTime() + 2 * 60 * 60 * 1000 > Date.now());
         
@@ -254,9 +259,9 @@ exports.globalRatingCommand = async (ctx) => {
         };
 
         if (currentRound && user.in_global_rating) {
-            const timeLeft = Math.ceil(currentRound.minutes_left);
+            const timeLeft = Math.ceil((new Date(currentRound.rating_end_time).getTime() - Date.now()) / 60000);
             message += `\n⏰ До конца раунда: ${timeLeft} минут`;
-            message += `\n\n⏳ Ожидайте окончания раунда...`;
+            message += `\n\n⏳ Ваша анкета участвует в оценке...`;
         } else if (!currentRound) {
             if (isBlocked) {
                 message += `\n\n⚠️ Вы недавно победили в глобальной оценке!\n`;
@@ -296,25 +301,8 @@ exports.balanceCommand = async (ctx) => {
     }
 };
 
-async function announceGlobalRatingStart(ctx) {
-    const users = await db.getAllUsers();
-    const message = `🌟 *Внимание! Начался новый раунд глобальной оценки!*\n\n` +
-                    `🎯 Участвуйте в оценке одной из 10 анкет!`;
-
-    for (const user of users) {
-        try {
-            await ctx.telegram.sendMessage(user.user_id, message, {
-                parse_mode: 'Markdown'
-            });
-        } catch (error) {
-            console.error(`Ошибка отправки уведомления пользователю ${user.user_id}:`, error);
-        }
-    }
-}
-
 async function startGlobalRating(ctx) {
     const user = await db.getUserProfile(ctx.from.id);
-    const participantsCount = await db.getGlobalRatingParticipantsCount();
 
     const isBlocked = user.last_global_win && 
         (new Date(user.last_global_win).getTime() + 2 * 60 * 60 * 1000 > Date.now());
@@ -324,11 +312,17 @@ async function startGlobalRating(ctx) {
         return ctx.reply(`Вы недавно победили в глобальной оценке! Подождите ещё ${minutesLeft} минут для участия.`);
     }
 
-    await db.joinGlobalRating(ctx.from.id);
-    await ctx.answerCbQuery('Вы успешно присоединились к глобальной оценке!');
+    if (user.coins < 50) {
+        return ctx.reply('Недостаточно монет для участия!');
+    }
 
-    const updatedParticipantsCount = await db.getGlobalRatingParticipantsCount();
-    if (updatedParticipantsCount === 10) {
+    try {
+        await db.joinGlobalRating(ctx.from.id);
+        await ctx.answerCbQuery('Вы успешно присоединились к глобальной оценке!');
+        await ctx.reply('Ваша анкета участвует в глобальной оценке! Дождитесь окончания раунда.');
+    } catch (error) {
+        console.error('Ошибка при присоединении к глобальной оценке:', error);
+        await ctx.reply('Произошла ошибка при присоединении к глобальной оценке.');
     }
 }
 
@@ -412,29 +406,98 @@ exports.registerBotActions = (bot) => {
     bot.action(/^rate_(\d+)_(\d+)$/, async (ctx) => {
         try {
             const [, targetId, rating] = ctx.match.map(Number);
-            const result = await db.saveRating(targetId, ctx.from.id, rating);
             
+            const existingRating = await db.getRating(targetId, ctx.from.id);
+            if (existingRating) {
+                await ctx.answerCbQuery('Вы уже оценили эту анкету!');
+                return;
+            }
+
+            await db.saveRating(targetId, ctx.from.id, rating);
             await ctx.answerCbQuery('Оценка сохранена!');
 
-            if (result?.isMutualHigh) {
-                const targetUser = await db.getUserProfile(targetId);
-                await ctx.reply(`🎉 Взаимная симпатия!\n` +
-                              `${targetUser.name} тоже высоко оценил(а) вас!\n` +
-                              `${targetUser.username ? `Telegram: @${targetUser.username}` : ''}`);
+            // Получаем следующую анкету
+            const nextProfile = await db.getNextProfile(ctx.from.id);
+            if (!nextProfile) {
+                await ctx.reply('На данный момент доступных анкет больше нет. Попробуйте позже! 😊', mainMenu);
+                return;
             }
 
-            // Если оценка от 7 до 10, показываем профиль
+            // Если поставили высокую оценку (7-10), отправляем свою анкету
             if (rating >= 7) {
-                await ctx.reply(`Вас высоко оценили! Вот ваш профиль:`);
-                await sendProfileForRating(ctx, result.targetProfile); // Показываем профиль
-            } else {
-                const nextProfile = await db.getNextProfile(ctx.from.id);
-                if (nextProfile) {
-                    await sendProfileForRating(ctx, nextProfile);
+                const myProfile = await db.getUserProfile(ctx.from.id);
+                const photos = await db.getUserPhotos(ctx.from.id);
+                
+                // Экранируем специальные символы для Markdown
+                const escapedName = myProfile.name.replace(/([_*[\]()~`>#+\-.!])/g, '\\$1');
+                const escapedCity = myProfile.city.replace(/([_*[\]()~`>#+\-.!])/g, '\\$1');
+                const escapedDescription = myProfile.description ? 
+                    myProfile.description.replace(/([_*[\]()~`>#+\-.!])/g, '\\$1') : '';
+                const escapedUsername = ctx.from.username ? 
+                    ctx.from.username.replace(/([_*[\]()~`>#+\-.!])/g, '\\$1') : 'отсутствует';
+
+                const profileText = `�� Вас высоко оценили!\n\n` +
+                                  `👤 Профиль того, кто вас оценил:\n` +
+                                  `📝 Имя: ${escapedName}\n` +
+                                  `🎂 Возраст: ${myProfile.age}\n` +
+                                  `🌆 Город: ${escapedCity}\n` +
+                                  `${escapedDescription ? `\n📄 О себе: ${escapedDescription}` : ''}\n\n` +
+                                  `📱 Telegram: @${escapedUsername}`;
+
+                if (photos.length > 0) {
+                    const mediaGroup = photos.map((photoId, index) => ({
+                        type: 'photo',
+                        media: photoId,
+                        ...(index === 0 && { 
+                            caption: `�� Вас высоко оценили!\n\n` +
+                                    `👤 Профиль того, кто вас оценил:\n` +
+                                    `📝 Имя: ${escapedName}\n` +
+                                    `🎂 Возраст: ${myProfile.age}\n` +
+                                    `🌆 Город: ${escapedCity}\n` +
+                                    `${escapedDescription ? `\n📄 О себе: ${escapedDescription}` : ''}\n\n` +
+                                    `📱 Telegram: @${escapedUsername}`,
+                            parse_mode: 'Markdown'
+                        })
+                    }));
+                    await ctx.telegram.sendMediaGroup(targetId, mediaGroup);
                 } else {
-                    await ctx.reply('На сегодня анкеты закончились. Приходите позже!', mainMenu);
+                    await ctx.telegram.sendMessage(targetId, profileText, { parse_mode: 'Markdown' });
                 }
             }
+
+            // Если меня кто-то оценил высоко, показываем его анкету
+            const highRatingsForMe = await db.getHighRatingsForUser(ctx.from.id);
+            if (highRatingsForMe.length > 0) {
+                for (const rating of highRatingsForMe) {
+                    const raterProfile = await db.getUserProfile(rating.from_user_id);
+                    const raterPhotos = await db.getUserPhotos(rating.from_user_id);
+
+                    const raterProfileText = `🎉 Этот пользователь оценил вас на ${rating.rating}/10!\n\n` +
+                                          `👤 *Профиль:*\n` +
+                                          `📝 Имя: ${raterProfile.name}\n` +
+                                          `🎂 Возраст: ${raterProfile.age}\n` +
+                                          `🌆 Город: ${raterProfile.city}\n` +
+                                          `${raterProfile.description ? `\n📄 О себе: ${raterProfile.description}` : ''}\n\n` +
+                                          `📱 Telegram: @${raterProfile.username || 'отсутствует'}`;
+
+                    if (raterPhotos.length > 0) {
+                        const mediaGroup = raterPhotos.map((photoId, index) => ({
+                            type: 'photo',
+                            media: photoId,
+                            ...(index === 0 && { caption: raterProfileText, parse_mode: 'Markdown' })
+                        }));
+                        await ctx.replyWithMediaGroup(mediaGroup);
+                    } else {
+                        await ctx.reply(raterProfileText, { parse_mode: 'Markdown' });
+                    }
+                }
+                // Очищаем обработанные оценки
+                await db.clearProcessedHighRatings(ctx.from.id);
+            }
+
+            // Показываем следующую анкету для оценки
+            await sendProfileForRating(ctx, nextProfile);
+
         } catch (error) {
             console.error('Ошибка при сохранении оценки:', error);
             await ctx.answerCbQuery('Произошла ошибка при сохранении оценки');
