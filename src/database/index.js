@@ -64,8 +64,9 @@ const db = {
                     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     registration_end_time TIMESTAMP,
                     rating_end_time TIMESTAMP,
-                    voting_end_time TIMESTAMP,
-                    is_active BOOLEAN DEFAULT true
+                    final_voting_end_time TIMESTAMP,
+                    is_active BOOLEAN DEFAULT true,
+                    is_final_voting BOOLEAN DEFAULT false
                 );
 
                 CREATE TABLE IF NOT EXISTS global_votes (
@@ -169,24 +170,57 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            await client.query(`
-                INSERT INTO ratings (from_user_id, to_user_id, rating)
-                VALUES ($1, $2, $3)
-            `, [fromUserId, targetId, rating]);
+            // Проверяем, участвует ли целевой пользователь в глобальной оценке
+            const targetUser = await client.query(`
+                SELECT in_global_rating FROM users WHERE user_id = $1
+            `, [targetId]);
 
-            // Начисляем монеты за высокую оценку
-            let coinsToAdd = 0;
-            if (rating === 7) coinsToAdd = 2;
-            else if (rating === 8) coinsToAdd = 3;
-            else if (rating === 9) coinsToAdd = 4;
-            else if (rating === 10) coinsToAdd = 5;
+            if (targetUser.rows[0].in_global_rating) {
+                // Если участвует в глобальной оценке, сохраняем только в global_ratings
+                const currentRound = await client.query(`
+                    SELECT id FROM global_rounds WHERE is_active = true
+                `);
+                
+                if (currentRound.rows[0]) {
+                    // Сохраняем только в global_ratings для текущего раунда
+                    await client.query(`
+                        INSERT INTO global_ratings (from_user_id, to_user_id, rating, round_id)
+                        VALUES ($1, $2, $3, $4)
+                    `, [fromUserId, targetId, rating, currentRound.rows[0].id]);
 
-            if (coinsToAdd > 0) {
+                    // Обновляем суммарный рейтинг пользователя из таблицы global_ratings
+                    await client.query(`
+                        UPDATE users 
+                        SET average_rating = (
+                            SELECT SUM(rating)
+                            FROM global_ratings 
+                            WHERE to_user_id = $1
+                            AND round_id = $2
+                        )
+                        WHERE user_id = $1
+                    `, [targetId, currentRound.rows[0].id]);
+                }
+            } else {
+                // Если не участвует, сохраняем в обычную таблицу ratings
                 await client.query(`
-                    UPDATE users 
-                    SET coins = COALESCE(coins, 0) + $1 
-                    WHERE user_id = $2
-                `, [coinsToAdd, targetId]);
+                    INSERT INTO ratings (from_user_id, to_user_id, rating)
+                    VALUES ($1, $2, $3)
+                `, [fromUserId, targetId, rating]);
+
+                // Начисляем монеты за высокую оценку
+                let coinsToAdd = 0;
+                if (rating === 7) coinsToAdd = 2;
+                else if (rating === 8) coinsToAdd = 3;
+                else if (rating === 9) coinsToAdd = 4;
+                else if (rating === 10) coinsToAdd = 5;
+
+                if (coinsToAdd > 0) {
+                    await client.query(`
+                        UPDATE users 
+                        SET coins = COALESCE(coins, 0) + $1 
+                        WHERE user_id = $2
+                    `, [coinsToAdd, targetId]);
+                }
             }
 
             await client.query('COMMIT');
@@ -205,14 +239,36 @@ const db = {
             LEFT JOIN photos p ON u.user_id = p.user_id
             WHERE u.user_id != $1
             AND (
-                u.last_win_time IS NULL 
-                OR u.last_win_time < NOW() - INTERVAL '1 hour'
-            )
-            AND NOT EXISTS (
-                SELECT 1 FROM ratings r
-                WHERE r.from_user_id = $1 
-                AND r.to_user_id = u.user_id
-                AND (r.created_at > NOW() - INTERVAL '1 hour' OR r.is_skip = true)
+                -- Показываем профиль если:
+                (
+                    -- Это обычная оценка (не участник глобальной оценки)
+                    u.in_global_rating = false
+                    AND (
+                        u.last_win_time IS NULL 
+                        OR u.last_win_time < NOW() - INTERVAL '1 hour'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM ratings r
+                        WHERE r.from_user_id = $1 
+                        AND r.to_user_id = u.user_id
+                        AND (r.created_at > NOW() - INTERVAL '1 hour' OR r.is_skip = true)
+                    )
+                )
+                OR
+                -- ИЛИ это участник глобальной оценки
+                (
+                    u.in_global_rating = true
+                    AND NOT EXISTS (
+                        SELECT 1 FROM global_ratings gr
+                        WHERE gr.from_user_id = $1 
+                        AND gr.to_user_id = u.user_id
+                        AND gr.round_id = (
+                            SELECT id FROM global_rounds 
+                            WHERE is_active = true
+                            LIMIT 1
+                        )
+                    )
+                )
             )
             GROUP BY u.user_id
             ORDER BY RANDOM()
@@ -325,7 +381,7 @@ const db = {
                 WHERE u.user_id != $1 
                 AND u.age BETWEEN $2 AND $3  
                 AND u.in_global_rating = false  
-                AND r.rating IS NULL
+                AND (r.rating IS NULL OR r.created_at < NOW() - INTERVAL '24 hours')
                 ORDER BY RANDOM()
                 LIMIT 10
             `, [userId, minAge, maxAge]);
@@ -343,48 +399,34 @@ const db = {
             await client.query('BEGIN');
 
             const user = await client.query(`
-                SELECT 
-                    coins, 
-                    last_global_win,
-                    CASE 
-                        WHEN last_global_win IS NOT NULL 
-                        AND last_global_win > NOW() - INTERVAL '2 hours'
-                        THEN TRUE 
-                        ELSE FALSE 
-                    END as is_blocked
-                FROM users 
-                WHERE user_id = $1
+                SELECT coins FROM users WHERE user_id = $1
             `, [userId]);
             
             if (!user.rows[0] || user.rows[0].coins < 50) {
                 throw new Error('Недостаточно монет для участия! Необходимо 50 монет.');
             }
 
-            if (user.rows[0].is_blocked) {
-                const minutesLeft = Math.ceil(
-                    (new Date(user.rows[0].last_global_win).getTime() + 2 * 60 * 60 * 1000 - Date.now()) / 60000
-                );
-                throw new Error(`Вы недавно победили в глобальной оценке! Подождите ещё ${minutesLeft} минут.`);
-            }
-
-            const currentRound = await client.query(`
-                SELECT * FROM global_rounds WHERE is_active = true
+            // Проверяем существование активного раунда
+            const activeRound = await client.query(`
+                SELECT id FROM global_rounds WHERE is_active = true
             `);
 
-            let isNewRound = false;
-            if (!currentRound.rows[0]) {
+            // Если активного раунда нет, создаем новый
+            if (!activeRound.rows.length) {
                 const now = new Date();
-                const ratingEnd = new Date(now.getTime() + 5 * 60000);
+                const ratingEndTime = new Date(now.getTime() + 25 * 60 * 1000); // 25 минут
 
                 await client.query(`
-                    INSERT INTO global_rounds 
-                    (start_time, rating_end_time, is_active)
-                    VALUES ($1, $2, true)
-                `, [now, ratingEnd]);
-                
-                isNewRound = true;
+                    INSERT INTO global_rounds (
+                        start_time, 
+                        rating_end_time,
+                        is_active,
+                        is_final_voting
+                    ) VALUES ($1, $2, true, false)
+                `, [now, ratingEndTime]);
             }
 
+            // Обновляем статус пользователя
             await client.query(`
                 UPDATE users 
                 SET coins = coins - 50,
@@ -393,7 +435,6 @@ const db = {
             `, [userId]);
 
             await client.query('COMMIT');
-            return { isNewRound };
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;
@@ -404,27 +445,33 @@ const db = {
 
     getCurrentGlobalRound: async () => {
         const result = await pool.query(`
+            WITH expired_rounds AS (
+                UPDATE global_rounds 
+                SET is_active = false 
+                WHERE is_active = true 
+                AND rating_end_time < NOW()
+                RETURNING id
+            )
             SELECT *,
             CASE 
                 WHEN rating_end_time > NOW() THEN 
                     EXTRACT(EPOCH FROM (rating_end_time - NOW()))/60
                 ELSE 
                     NULL 
-            END as minutes_left
+            END as minutes_left,
+            CASE
+                WHEN final_voting_end_time > NOW() THEN
+                    EXTRACT(EPOCH FROM (final_voting_end_time - NOW()))/60
+                ELSE
+                    NULL
+            END as final_voting_minutes_left
             FROM global_rounds 
             WHERE is_active = true 
             ORDER BY start_time DESC 
             LIMIT 1
         `);
 
-        const round = result.rows[0];
-        
-        if (round && round.minutes_left <= 0) {
-            await db.finishGlobalRound();
-            return null;
-        }
-        
-        return round;
+        return result.rows[0];
     },
 
     getGlobalRatingParticipants: async (excludeUserId = null) => {
@@ -482,57 +529,45 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            // Получаем победителей по сумме финальных голосов
-            const winners = await client.query(`
+            // Получаем всех участников и сортируем по количеству голосов
+            const participants = await client.query(`
                 SELECT 
-                    u.*,
-                    COALESCE(SUM(gv.rating), 0) as final_rating
+                    u.user_id,
+                    u.name,
+                    COUNT(gv.voter_id) as votes_count
                 FROM users u
                 LEFT JOIN global_votes gv ON u.user_id = gv.candidate_id
                 WHERE u.in_global_rating = true
-                GROUP BY u.user_id
-                ORDER BY final_rating DESC
-                LIMIT 3
+                GROUP BY u.user_id, u.name
+                ORDER BY votes_count DESC
             `);
 
-            // Обновляем статусы и начисляем монеты
-            for (let i = 0; i < winners.rows.length; i++) {
-                const winner = winners.rows[i];
+            // Берем топ-10 для финального голосования
+            const topTen = participants.rows.slice(0, 10);
+
+            // Обновляем статусы и начисляем монеты победителям
+            for (let i = 0; i < topTen.length; i++) {
+                const winner = topTen[i];
                 const coins = i === 0 ? 500 : i === 1 ? 300 : i === 2 ? 100 : 0;
 
-                await client.query(`
-                    UPDATE users 
-                    SET coins = coins + $1,
-                        last_global_win = NOW(),
-                        in_global_rating = false
-                    WHERE user_id = $2
-                `, [coins, winner.user_id]);
+                if (coins > 0) {
+                    await client.query(`
+                        UPDATE users 
+                        SET coins = coins + $1
+                        WHERE user_id = $2
+                    `, [coins, winner.user_id]);
+                }
             }
 
-            // Сбрасываем статус участия для всех остальных
+            // Сбрасываем статус участия для всех
             await client.query(`
                 UPDATE users 
                 SET in_global_rating = false 
-                WHERE user_id NOT IN (
-                    SELECT user_id FROM (
-                        SELECT user_id
-                        FROM users
-                        WHERE in_global_rating = true
-                        ORDER BY user_id
-                        LIMIT 3
-                    ) top_3
-                )
-            `);
-
-            // Завершаем текущий раунд
-            await client.query(`
-                UPDATE global_rounds 
-                SET is_active = false 
-                WHERE is_active = true
+                WHERE in_global_rating = true
             `);
 
             await client.query('COMMIT');
-            return winners.rows;
+            return topTen;
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;
@@ -543,15 +578,16 @@ const db = {
 
     createGlobalRound: async () => {
         const now = new Date();
-        const endTime = new Date(now.getTime() + 25 * 60 * 1000); // 25 минут
+        const ratingEndTime = new Date(now.getTime() + 30 * 60 * 1000); // 30 минут
 
         await pool.query(`
             INSERT INTO global_rounds (
                 start_time, 
-                rating_end_time, 
-                is_active
-            ) VALUES ($1, $2, true)
-        `, [now, endTime]);
+                rating_end_time,
+                is_active,
+                is_final_voting
+            ) VALUES ($1, $2, true, false)
+        `, [now, ratingEndTime]);
     },
 
     getGlobalRatingParticipantsCount: async () => {
@@ -598,20 +634,31 @@ const db = {
         const result = await pool.query(`
             SELECT 
                 u.*,
-                COALESCE(SUM(r.rating), 0) as total_rating
+                COALESCE(COUNT(gv.voter_id), 0) as total_votes,
+                array_agg(DISTINCT p.photo_id) as photos
             FROM users u
-            LEFT JOIN ratings r ON u.user_id = r.to_user_id
+            LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
+            LEFT JOIN photos p ON p.user_id = u.user_id
             WHERE u.in_global_rating = true
-            AND r.created_at >= (
-                SELECT start_time 
-                FROM global_rounds 
-                WHERE is_active = true
-            )
             GROUP BY u.user_id
-            ORDER BY total_rating DESC
+            ORDER BY total_votes DESC, RANDOM()
             LIMIT 10
         `);
-        return result.rows;
+        
+        // Проверяем что есть результаты
+        if (!result.rows.length) {
+            return [];
+        }
+        
+        return result.rows.map(row => ({
+            user_id: row.user_id,
+            name: row.name,
+            age: row.age,
+            city: row.city,
+            description: row.description,
+            photos: row.photos.filter(p => p !== null), // Фильтруем null значения
+            total_votes: parseInt(row.total_votes)
+        }));
     },
 
     saveFinalVote: async (targetId, voterId, rating) => {
@@ -653,6 +700,46 @@ const db = {
             AND created_at > NOW() - INTERVAL '24 hours'
         `, [targetId, fromUserId]);
         return result.rows[0];
+    },
+
+    saveGlobalRating: async (targetId, fromUserId, rating) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const currentRound = await client.query(`
+                SELECT id FROM global_rounds 
+                WHERE is_active = true
+                LIMIT 1
+            `);
+
+            if (!currentRound.rows[0]) {
+                throw new Error('Активный глобальный раунд не найден');
+            }
+
+            await client.query(`
+                INSERT INTO global_ratings (from_user_id, to_user_id, rating, round_id)
+                VALUES ($1, $2, $3, $4)
+            `, [fromUserId, targetId, rating, currentRound.rows[0].id]);
+
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+
+    checkFinalVote: async (voterId) => {
+        const result = await pool.query(`
+            SELECT 1 FROM global_votes gv
+            JOIN global_rounds gr ON gv.round_id = gr.id
+            WHERE gv.voter_id = $1 
+            AND gr.is_active = true 
+            AND gr.is_final_voting = true
+        `, [voterId]);
+        return result.rows.length > 0;
     }
 };
 

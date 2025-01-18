@@ -88,44 +88,78 @@ setInterval(async () => {
     try {
         const currentRound = await db.getCurrentGlobalRound();
         if (currentRound && new Date(currentRound.rating_end_time) <= new Date()) {
-            const topProfiles = await db.getTopProfilesByRatings();
-            
-            const users = await db.getAllUsers();
-            for (const user of users) {
-                if (!await db.isUserInGlobalRating(user.user_id)) {
-                    for (const profile of topProfiles) {
-                        try {
-                            await sendProfileForFinalVoting(bot, user.user_id, profile);
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                        } catch (error) {
-                            console.error(`Ошибка отправки анкеты пользователю ${user.user_id}:`, error);
-                        }
-                    }
-                }
+            const winners = await db.finishGlobalRound();
+            if (winners && winners.length > 0) {
+                await broadcastWinners(bot, winners);
             }
-
-            setTimeout(async () => {
-                const winners = await db.finishGlobalRound();
-                for (let i = 0; i < Math.min(3, winners.length); i++) {
-                    const winner = winners[i];
-                    const coins = i === 0 ? 500 : i === 1 ? 300 : i === 2 ? 100 : 0;
-                    try {
-                        await bot.telegram.sendMessage(
-                            winner.user_id,
-                            `🎉 Поздравляем! Вы заняли ${i + 1} место в глобальной оценке и получили ${coins} монет!`
-                        );
-                    } catch (error) {
-                        console.error(`Ошибка отправки уведомления победителю ${winner.user_id}:`, error);
-                    }
-                }
-
-                await db.createGlobalRound();
-            }, 5 * 60 * 1000);
+            await db.createGlobalRound();
         }
     } catch (error) {
         console.error('Ошибка обновления глобального раунда:', error);
     }
 }, 60 * 1000);
+
+async function sendWinnersMessage(bot, userId, winners) {
+    try {
+        const topWinners = winners.slice(0, 3);
+        if (topWinners.length === 0) return;
+
+        await sendWinnerProfile(bot, userId, topWinners[0], 0, topWinners.length);
+
+        bot.action(/winners_prev_(\d+)/, async (ctx) => {
+            const index = parseInt(ctx.match[1]);
+            const newIndex = index > 0 ? index - 1 : topWinners.length - 1;
+            await ctx.answerCbQuery();
+            await sendWinnerProfile(bot, ctx.from.id, topWinners[newIndex], newIndex, topWinners.length);
+        });
+
+        bot.action(/winners_next_(\d+)/, async (ctx) => {
+            const index = parseInt(ctx.match[1]);
+            const newIndex = index < topWinners.length - 1 ? index + 1 : 0;
+            await ctx.answerCbQuery();
+            await sendWinnerProfile(bot, ctx.from.id, topWinners[newIndex], newIndex, topWinners.length);
+        });
+    } catch (error) {
+        console.error('Ошибка отправки сообщения о победителях:', error);
+    }
+}
+
+async function sendWinnerProfile(bot, userId, winner, currentIndex, totalWinners) {
+    const place = currentIndex + 1;
+    const medals = ['🥇', '🥈', '🥉'];
+    const prizes = [500, 300, 100];
+
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: '⬅️', callback_data: `winners_prev_${currentIndex}` },
+                { text: `${currentIndex + 1}/${totalWinners}`, callback_data: 'winners_count' },
+                { text: '➡️', callback_data: `winners_next_${currentIndex}` }
+            ]
+        ]
+    };
+
+    const photos = await db.getUserPhotos(winner.user_id);
+    const caption = `${medals[currentIndex]} *${place} место*\n\n` +
+                   `👤 *${winner.name}*, ${winner.age} лет\n` +
+                   `🌆 ${winner.city}\n` +
+                   `${winner.description ? `📝 ${winner.description}\n` : ''}` +
+                   `\n💫 Набрано голосов: ${winner.total_votes}\n` +
+                   `💰 Получено монет: ${prizes[currentIndex]}`;
+
+    if (photos.length > 0) {
+        await bot.telegram.sendPhoto(userId, photos[0], {
+            caption: caption,
+            parse_mode: 'Markdown',
+            reply_markup: keyboard
+        });
+    } else {
+        await bot.telegram.sendMessage(userId, caption, {
+            parse_mode: 'Markdown',
+            reply_markup: keyboard
+        });
+    }
+}
 
 bot.command('startglobalround', async (ctx) => {
     if (ctx.from.id === config.ADMIN_ID) {
@@ -268,55 +302,6 @@ bot.action('vote_profile', async (ctx) => {
     await ctx.answerCbQuery('Ваш голос учтен!');
     await showNextGlobalProfile(ctx);
 });
-
-async function sendProfileForFinalVoting(bot, userId, profile) {
-    try {
-        const photos = await db.getUserPhotos(profile.user_id);
-        const profileText = `👤 *Анкета для финального голосования:*\n` +
-                          `📝 Имя: ${profile.name}\n` +
-                          `🎂 Возраст: ${profile.age}\n` +
-                          `🌆 Город: ${profile.city}\n` +
-                          `${profile.description ? `\n📄 О себе: ${profile.description}` : ''}`;
-
-        const ratingKeyboard = {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: '1️⃣', callback_data: `final_vote_${profile.user_id}_1` },
-                        { text: '2️⃣', callback_data: `final_vote_${profile.user_id}_2` },
-                        { text: '3️⃣', callback_data: `final_vote_${profile.user_id}_3` },
-                        { text: '4️⃣', callback_data: `final_vote_${profile.user_id}_4` },
-                        { text: '5️⃣', callback_data: `final_vote_${profile.user_id}_5` }
-                    ],
-                    [
-                        { text: '6️⃣', callback_data: `final_vote_${profile.user_id}_6` },
-                        { text: '7️⃣', callback_data: `final_vote_${profile.user_id}_7` },
-                        { text: '8️⃣', callback_data: `final_vote_${profile.user_id}_8` },
-                        { text: '9️⃣', callback_data: `final_vote_${profile.user_id}_9` },
-                        { text: '🔟', callback_data: `final_vote_${profile.user_id}_10` }
-                    ]
-                ]
-            }
-        };
-
-        if (photos.length > 0) {
-            const mediaGroup = photos.map((photoId, index) => ({
-                type: 'photo',
-                media: photoId,
-                ...(index === 0 && { caption: profileText, parse_mode: 'Markdown' })
-            }));
-            await bot.telegram.sendMediaGroup(userId, mediaGroup);
-            await bot.telegram.sendMessage(userId, 'Оцените анкету от 1 до 10:', ratingKeyboard);
-        } else {
-            await bot.telegram.sendMessage(userId, profileText, {
-                parse_mode: 'Markdown',
-                ...ratingKeyboard
-            });
-        }
-    } catch (error) {
-        console.error('Ошибка при отправке анкеты для финального голосования:', error);
-    }
-}
 
 bot.action(/^final_vote_(\d+)_(\d+)$/, async (ctx) => {
     try {

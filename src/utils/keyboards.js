@@ -72,11 +72,42 @@ exports.globalVotingKeyboard = (userId) => ({
 
 exports.ratingKeyboard = (userId) => ({
     reply_markup: {
-        inline_keyboard: Array.from({ length: 10 }, (_, i) => ([
-            { text: `${i + 1}`, callback_data: `rate_profile_${userId}_${i + 1}` }
-        ]))
+        inline_keyboard: [
+            [
+                { text: '1️⃣', callback_data: `rate_${userId}_1` },
+                { text: '2️⃣', callback_data: `rate_${userId}_2` },
+                { text: '3️⃣', callback_data: `rate_${userId}_3` },
+                { text: '4️⃣', callback_data: `rate_${userId}_4` },
+                { text: '5️⃣', callback_data: `rate_${userId}_5` }
+            ],
+            [
+                { text: '6️⃣', callback_data: `rate_${userId}_6` },
+                { text: '7️⃣', callback_data: `rate_${userId}_7` },
+                { text: '8️⃣', callback_data: `rate_${userId}_8` },
+                { text: '9️⃣', callback_data: `rate_${userId}_9` },
+                { text: '🔟', callback_data: `rate_${userId}_10` }
+            ]
+        ]
     }
 });
+
+exports.profileNavigationKeyboard = (currentIndex, totalProfiles) => ({
+    inline_keyboard: [[
+        { text: '⬅️', callback_data: `rating_prev_${currentIndex}` },
+        { text: `${currentIndex + 1}/${totalProfiles}`, callback_data: 'rating_count' },
+        { text: '➡️', callback_data: `rating_next_${currentIndex}` }
+    ]]
+});
+
+exports.editProfileButton = {
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: '✏️ Редактировать профиль', callback_data: 'edit_profile' }
+            ]
+        ]
+    }
+};
 
 exports.viewProfileButton = {
     reply_markup: {
