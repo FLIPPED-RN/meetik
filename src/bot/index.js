@@ -87,7 +87,9 @@ async function notifyParticipantsReady() {
 setInterval(async () => {
     try {
         const currentRound = await db.getCurrentGlobalRound();
-        if (currentRound && new Date(currentRound.rating_end_time) <= new Date()) {
+        if (!currentRound) {
+            await db.createGlobalRound();
+        } else if (new Date(currentRound.rating_end_time) <= new Date()) {
             const winners = await db.finishGlobalRound();
             if (winners && winners.length > 0) {
                 await broadcastWinners(bot, winners);
