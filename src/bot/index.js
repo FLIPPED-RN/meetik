@@ -5,6 +5,7 @@ const middleware = require('./middleware');
 const { registrationScene, editProfileScene } = require('../scenes');
 const { mainMenu } = require('../utils/keyboards');
 const db = require('../database');
+const { startPeriodicTop10Updates } = require('./commands');
 
 const bot = new Telegraf(config.BOT_TOKEN);
 const stage = new Scenes.Stage([registrationScene, editProfileScene]);
@@ -12,10 +13,38 @@ const stage = new Scenes.Stage([registrationScene, editProfileScene]);
 bot.use(session());
 bot.use(stage.middleware());
 bot.use(middleware.errorHandler);
-bot.use(middleware.userCheck);
 bot.use(middleware.rateLimit);
 
-bot.command('start', commands.startCommand);
+// Регистрируем команду start до middleware проверки подписки
+bot.command('start', async (ctx, next) => {
+    try {
+        const chatMember = await ctx.telegram.getChatMember('@meetik_info', ctx.from.id);
+        
+        if (['creator', 'administrator', 'member'].includes(chatMember.status)) {
+            return commands.startCommand(ctx, next);
+        }
+
+        const keyboard = {
+            inline_keyboard: [
+                [{ text: '📢 Подписаться на канал', url: 'https://t.me/meetik_info' }],
+                [{ text: '🔄 Проверить подписку', callback_data: 'check_subscription' }]
+            ]
+        };
+
+        await ctx.reply(
+            '👋 Добро пожаловать!\n\n❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
+            { reply_markup: keyboard }
+        );
+    } catch (error) {
+        console.error('Ошибка при проверке подписки:', error);
+        await ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.');
+    }
+});
+
+// Остальные middleware
+bot.use(middleware.checkSubscription);
+bot.use(middleware.userCheck);
+
 bot.command('global', commands.globalRatingCommand);
 bot.hears('👤 Мой профиль', commands.profileCommand);
 bot.hears('🔍 Начать оценивать', commands.startRatingCommand);
@@ -63,6 +92,8 @@ async function startBot() {
                 await notifyParticipantsReady();
             }
         }, 60000);
+
+        startPeriodicTop10Updates(bot);
 
     } catch (error) {
         console.error('Ошибка при запуске бота:', error);

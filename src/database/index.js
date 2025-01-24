@@ -24,6 +24,15 @@ const db = {
                     last_global_win TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS global_ratings (
+                    id SERIAL PRIMARY KEY,
+                    from_user_id BIGINT REFERENCES users(user_id),
+                    to_user_id BIGINT REFERENCES users(user_id),
+                    rating INTEGER CHECK (rating >= 1 AND rating <= 10),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    round_id INTEGER
+                );
+
                 CREATE TABLE IF NOT EXISTS photos (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES users(user_id),
@@ -50,15 +59,6 @@ const db = {
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
 
-                CREATE TABLE IF NOT EXISTS global_ratings (
-                    id SERIAL PRIMARY KEY,
-                    from_user_id BIGINT REFERENCES users(user_id),
-                    to_user_id BIGINT REFERENCES users(user_id),
-                    rating INTEGER CHECK (rating >= 1 AND rating <= 10),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    round_id INTEGER
-                );
-
                 CREATE TABLE IF NOT EXISTS global_rounds (
                     id SERIAL PRIMARY KEY,
                     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -75,6 +75,15 @@ const db = {
                     candidate_id BIGINT REFERENCES users(user_id),
                     round_id INTEGER REFERENCES global_rounds(id),
                     rating INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS global_rating_stats (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(user_id),
+                    round_id INTEGER REFERENCES global_rounds(id),
+                    total_votes INTEGER DEFAULT 0,
+                    total_rating INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             `);
@@ -272,6 +281,7 @@ const db = {
                     AND EXISTS (
                         SELECT 1 FROM global_rounds gr
                         WHERE gr.is_active = true
+                        AND NOT gr.is_final_voting
                     )
                     AND NOT EXISTS (
                         SELECT 1 FROM global_ratings gr
@@ -286,7 +296,7 @@ const db = {
                 )
             )
             GROUP BY u.user_id
-            ORDER BY RANDOM()
+            ORDER BY u.in_global_rating DESC, RANDOM()
             LIMIT 1
         `, [userId]);
 
@@ -385,27 +395,24 @@ const db = {
     },
 
     getProfilesForRating: async (userId) => {
-        try {
-            const user = await db.getUserProfile(userId);
-            const minAge = user.age - 2;
-            const maxAge = user.age + 2;
-
-            const result = await pool.query(`
-                SELECT u.* FROM users u
-                LEFT JOIN ratings r ON u.user_id = r.to_user_id AND r.from_user_id = $1
-                WHERE u.user_id != $1 
-                AND u.age BETWEEN $2 AND $3  
-                AND u.in_global_rating = false  
-                AND (r.rating IS NULL OR r.created_at < NOW() - INTERVAL '24 hours')
-                ORDER BY RANDOM()
-                LIMIT 10
-            `, [userId, minAge, maxAge]);
-
-            return result.rows;
-        } catch (error) {
-            console.error('Ошибка при получении профилей для оценки:', error);
-            throw error;
-        }
+        const result = await pool.query(`
+            SELECT u.*, array_agg(p.photo_id) as photos
+            FROM users u
+            LEFT JOIN photos p ON u.user_id = p.user_id
+            WHERE u.user_id != $1
+            AND u.in_global_rating = false
+            AND NOT EXISTS (
+                SELECT 1 
+                FROM ratings r 
+                WHERE r.to_user_id = u.user_id 
+                AND r.from_user_id = $1
+                AND r.created_at > NOW() - INTERVAL '1 hour'
+            )
+            GROUP BY u.user_id
+            ORDER BY RANDOM()
+            LIMIT 10
+        `, [userId]);
+        return result.rows;
     },
 
     joinGlobalRating: async (userId) => {
@@ -489,40 +496,40 @@ const db = {
         return result.rows[0];
     },
 
-    getGlobalRatingParticipants: async (excludeUserId = null) => {
-        const query = `
-            SELECT u.*, 
-                   array_agg(DISTINCT p.photo_id) FILTER (WHERE p.photo_id IS NOT NULL) as photos,
-                   COALESCE(COUNT(DISTINCT gv.voter_id), 0) as votes_count
-            FROM users u
-            LEFT JOIN photos p ON p.user_id = u.user_id
-            LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
-            WHERE u.in_global_rating = true
-            AND EXISTS (
-                SELECT 1 FROM global_rounds gr
-                WHERE gr.is_active = true
-                AND gr.is_final_voting = false
-            )
-            ${excludeUserId ? 'AND u.user_id != $1' : ''}
-            AND NOT EXISTS (
-                SELECT 1 FROM global_votes gv2
-                WHERE gv2.voter_id = $1
-                AND gv2.candidate_id = u.user_id
-                AND gv2.round_id = (
-                    SELECT id FROM global_rounds 
-                    WHERE is_active = true 
-                    LIMIT 1
-                )
-            )
-            GROUP BY u.user_id
-            ORDER BY RANDOM()
-        `;
+    getGlobalRatingParticipants: async (userId) => {
+        const client = await pool.connect();
+        try {
+            const currentRound = await client.query(`
+                SELECT id FROM global_rounds 
+                WHERE is_active = true 
+                AND is_final_voting = false
+            `);
 
-        const result = await pool.query(
-            query,
-            [excludeUserId]
-        );
-        return result.rows;
+            if (!currentRound.rows.length) {
+                return [];
+            }
+
+            // Получаем анкеты, которые пользователь еще не оценивал в текущем раунде
+            const result = await client.query(`
+                SELECT u.* 
+                FROM users u
+                WHERE u.in_global_rating = true
+                AND u.user_id != $1
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM global_votes gv 
+                    WHERE gv.candidate_id = u.user_id 
+                    AND gv.voter_id = $1
+                    AND gv.round_id = $2
+                )
+                ORDER BY RANDOM()
+                LIMIT 10
+            `, [userId, currentRound.rows[0].id]);
+
+            return result.rows;
+        } finally {
+            client.release();
+        }
     },
 
     saveGlobalVote: async (voterId, candidateId, rating) => {
@@ -530,23 +537,7 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            // Проверяем, не голосовал ли уже пользователь за этого кандидата
-            const existingVote = await client.query(`
-                SELECT id FROM global_votes 
-                WHERE voter_id = $1 
-                AND candidate_id = $2
-                AND round_id = (
-                    SELECT id FROM global_rounds 
-                    WHERE is_active = true 
-                    AND is_final_voting = false
-                    LIMIT 1
-                )
-            `, [voterId, candidateId]);
-
-            if (existingVote.rows.length > 0) {
-                throw new Error('Вы уже голосовали за этого участника');
-            }
-
+            // Получаем текущий активный раунд
             const currentRound = await client.query(`
                 SELECT id FROM global_rounds 
                 WHERE is_active = true 
@@ -557,10 +548,32 @@ const db = {
                 throw new Error('Активный раунд не найден');
             }
 
+            // Проверяем существующий голос
+            const existingVote = await client.query(`
+                SELECT id FROM global_votes 
+                WHERE voter_id = $1 
+                AND candidate_id = $2
+                AND round_id = $3
+            `, [voterId, candidateId, currentRound.rows[0].id]);
+
+            if (existingVote.rows.length > 0) {
+                throw new Error('Вы уже голосовали за этого участника');
+            }
+
+            // Сохраняем голос
             await client.query(`
                 INSERT INTO global_votes (voter_id, candidate_id, round_id, rating)
                 VALUES ($1, $2, $3, $4)
             `, [voterId, candidateId, currentRound.rows[0].id, rating]);
+
+            // Обновляем или создаем запись в global_rating_stats
+            await client.query(`
+                INSERT INTO global_rating_stats (user_id, round_id, total_votes, total_rating)
+                VALUES ($1, $2, 1, $3)
+                ON CONFLICT (user_id, round_id) DO UPDATE 
+                SET total_votes = global_rating_stats.total_votes + 1,
+                    total_rating = global_rating_stats.total_rating + $3
+            `, [candidateId, currentRound.rows[0].id, rating]);
 
             await client.query('COMMIT');
         } catch (error) {
@@ -576,14 +589,21 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            // Получаем топ-10 участников по сумме оценок
+            // Получаем топ-10 участников по сумме оценок из статистики
             const topParticipants = await client.query(`
-                SELECT u.*, SUM(gr.rating) as total_rating
+                SELECT 
+                    u.*,
+                    grs.total_votes,
+                    grs.total_rating
                 FROM users u
-                LEFT JOIN global_ratings gr ON gr.to_user_id = u.user_id
+                JOIN global_rating_stats grs ON grs.user_id = u.user_id
                 WHERE u.in_global_rating = true
-                GROUP BY u.user_id
-                ORDER BY total_rating DESC
+                AND grs.round_id = (
+                    SELECT id FROM global_rounds 
+                    WHERE is_active = true
+                    LIMIT 1
+                )
+                ORDER BY grs.total_rating DESC, grs.total_votes DESC
                 LIMIT 10
             `);
 
@@ -603,9 +623,24 @@ const db = {
                 }
             }
 
-            // Очищаем данные раунда
+            // Очищаем все данные глобального рейтинга
+            await client.query(`
+                WITH current_round AS (
+                    SELECT id FROM global_rounds WHERE is_active = true LIMIT 1
+                )
+                DELETE FROM global_rating_stats 
+                WHERE round_id = (SELECT id FROM current_round)
+            `);
+            
+            await client.query(`
+                WITH current_round AS (
+                    SELECT id FROM global_rounds WHERE is_active = true LIMIT 1
+                )
+                DELETE FROM global_votes 
+                WHERE round_id = (SELECT id FROM current_round)
+            `);
+            
             await client.query(`UPDATE users SET in_global_rating = false WHERE in_global_rating = true`);
-            await client.query(`DELETE FROM global_ratings`);
             await client.query(`UPDATE global_rounds SET is_active = false WHERE is_active = true`);
 
             await client.query('COMMIT');
@@ -667,32 +702,54 @@ const db = {
     },
 
     getRating: async (targetId, fromUserId) => {
-        const result = await pool.query(`
-            SELECT * FROM ratings 
-            WHERE to_user_id = $1 
-            AND from_user_id = $2 
-            AND created_at > NOW() - INTERVAL '1 hour'
-        `, [targetId, fromUserId]);
-        
-        if (!result.rows.length) {
-            // Проверяем глобальные оценки
-            const currentRound = await pool.query(`
+        const client = await pool.connect();
+        try {
+            const result = await client.query(`
+                SELECT * FROM ratings 
+                WHERE to_user_id = $1 
+                AND from_user_id = $2 
+                AND created_at > NOW() - INTERVAL '1 hour'
+            `, [targetId, fromUserId]);
+            
+            if (result.rows.length > 0) {
+                return result.rows[0];
+            }
+
+            const currentRound = await client.query(`
                 SELECT id FROM global_rounds WHERE is_active = true
             `);
             
-            if (currentRound.rows.length) {
-                const globalResult = await pool.query(`
-                    SELECT * FROM global_ratings 
-                    WHERE to_user_id = $1 
-                    AND from_user_id = $2 
+            if (currentRound.rows.length > 0) {
+                const globalResult = await client.query(`
+                    SELECT * FROM global_votes 
+                    WHERE candidate_id = $1 
+                    AND voter_id = $2 
                     AND round_id = $3
                 `, [targetId, fromUserId, currentRound.rows[0].id]);
                 
                 return globalResult.rows[0];
             }
+
+            return null;
+        } finally {
+            client.release();
         }
-        
-        return result.rows[0];
+    },
+
+    getGlobalRatingTop10: async () => {
+        const result = await pool.query(`
+            SELECT 
+                u.*,
+                COUNT(gv.voter_id) as votes_count,
+                SUM(gv.rating) as total_rating
+            FROM users u
+            LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
+            WHERE u.in_global_rating = true
+            GROUP BY u.user_id
+            ORDER BY total_rating DESC, votes_count DESC
+            LIMIT 10
+        `);
+        return result.rows;
     },
 };
 

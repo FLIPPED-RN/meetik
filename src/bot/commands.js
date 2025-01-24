@@ -341,28 +341,57 @@ async function startGlobalRating(ctx) {
     }
 }
 
+async function broadcastTop10(bot) {
+    try {
+        const top10 = await db.getGlobalRatingTop10();
+        const allUsers = await db.getAllUsers();
+
+        let message = '🏆 *Текущий топ-10 участников глобального рейтинга:*\n\n';
+        
+        top10.forEach((user, index) => {
+            const medal = index < 3 ? ['🥇', '🥈', '🥉'][index] : '🎯';
+            message += `${medal} ${index + 1}. ${user.name} (ID: ${user.user_id})\n`;
+            message += `⭐️ Рейтинг: ${user.total_rating || 0}\n`;
+            message += `👥 Голосов: ${user.votes_count || 0}\n\n`;
+        });
+
+        // Отправляем сообщение всем пользователям
+        for (const user of allUsers) {
+            try {
+                await bot.telegram.sendMessage(user.user_id, message, {
+                    parse_mode: 'Markdown'
+                });
+                // Небольшая задержка между отправками
+                await new Promise(resolve => setTimeout(resolve, 100));
+            } catch (error) {
+                console.error(`Ошибка отправки топ-10 пользователю ${user.user_id}:`, error);
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка при рассылке топ-10:', error);
+    }
+}
+
 async function finishGlobalRound() {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-
-        await client.query(`
-            UPDATE global_rounds 
-            SET is_active = false 
-            WHERE is_active = true
-        `);
 
         // Получаем всех участников глобального рейтинга с их результатами
         const allParticipants = await client.query(`
             SELECT 
                 u.*,
                 COUNT(gv.voter_id) as votes_count,
-                ROW_NUMBER() OVER (ORDER BY COUNT(gv.voter_id) DESC, RANDOM()) as place
+                SUM(gv.rating) as total_rating,
+                ROW_NUMBER() OVER (ORDER BY SUM(gv.rating) DESC, COUNT(gv.voter_id) DESC) as place
             FROM users u
             LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
             WHERE u.in_global_rating = true
             GROUP BY u.user_id
         `);
+
+        // Отправляем финальный топ-10 всем пользователям
+        await broadcastTop10(bot);
 
         // Обрабатываем топ-3 победителей
         for (let i = 0; i < allParticipants.rows.length; i++) {
@@ -454,6 +483,17 @@ async function broadcastGlobalResults(bot, participants) {
     }
 }
 
+// Функция для запуска периодической проверки и отправки топ-10
+function startPeriodicTop10Updates(bot) {
+    // Проверяем каждые 30 минут
+    setInterval(async () => {
+        const currentRound = await db.getCurrentGlobalRound();
+        if (currentRound && !currentRound.is_final_voting) {
+            await broadcastTop10(bot);
+        }
+    }, 30 * 60 * 1000); // 30 минут в миллисекундах
+}
+
 exports.startGlobalRating = startGlobalRating;
 
 exports.viewProfileCommand = async (ctx) => {
@@ -484,16 +524,27 @@ exports.registerBotActions = (bot) => {
         try {
             const [, targetId, rating] = ctx.match.map(Number);
             
+            // Проверяем существующую оценку (как для обычных, так и для глобальных анкет)
             const existingRating = await db.getRating(targetId, ctx.from.id);
             if (existingRating) {
-                // Тихо получаем следующую анкету без сообщения об ошибке
-                const nextGlobalProfile = await db.getGlobalRatingParticipants(ctx.from.id);
-                if (nextGlobalProfile && nextGlobalProfile.length > 0) {
-                    await sendProfileForRating(ctx, nextGlobalProfile[0]);
+                // Получаем следующую анкету
+                const isTargetInGlobalRating = await db.isUserInGlobalRating(targetId);
+                if (isTargetInGlobalRating) {
+                    const nextGlobalProfile = await db.getGlobalRatingParticipants(ctx.from.id);
+                    if (nextGlobalProfile && nextGlobalProfile.length > 0) {
+                        await sendProfileForRating(ctx, nextGlobalProfile[0]);
+                    } else {
+                        await ctx.reply('Вы оценили все доступные анкеты в глобальном рейтинге!', mainMenu);
+                    }
                 } else {
-                    await ctx.reply('Вы оценили все доступные анкеты в глобальном рейтинге!', mainMenu);
+                    const nextProfile = await db.getProfilesForRating(ctx.from.id);
+                    if (nextProfile && nextProfile.length > 0) {
+                        await sendProfileForRating(ctx, nextProfile[0]);
+                    } else {
+                        await ctx.reply('На данный момент доступных анкет больше нет. Попробуйте позже! 😊', mainMenu);
+                    }
                 }
-                await ctx.answerCbQuery();
+                await ctx.answerCbQuery('Вы уже оценивали эту анкету');
                 return;
             }
 
@@ -660,6 +711,27 @@ exports.registerBotActions = (bot) => {
             await ctx.answerCbQuery('Произошла ошибка при сохранении оценки');
         }
     });
+
+    bot.action('check_subscription', async (ctx) => {
+        try {
+            const chatMember = await ctx.telegram.getChatMember('@meetik_info', ctx.from.id);
+            
+            if (['creator', 'administrator', 'member'].includes(chatMember.status)) {
+                await ctx.answerCbQuery('✅ Спасибо за подписку! Теперь вы можете пользоваться ботом');
+                await ctx.deleteMessage();
+                
+                // Показываем главное меню после успешной проверки
+                await ctx.reply('Выберите действие:', {
+                    reply_markup: mainMenu
+                });
+            } else {
+                await ctx.answerCbQuery('❌ Вы все еще не подписаны на канал');
+            }
+        } catch (error) {
+            console.error('Ошибка при проверке подписки:', error);
+            await ctx.answerCbQuery('Произошла ошибка при проверке подписки');
+        }
+    });
 };
 
 async function startFinalVoting(bot) {
@@ -808,3 +880,7 @@ async function sendWinnerProfile(bot, userId, winner, currentIndex, totalWinners
         console.error('Ошибка отправки профиля победителя:', error);
     }
 }
+
+// Экспортируем новые функции
+exports.startPeriodicTop10Updates = startPeriodicTop10Updates;
+exports.broadcastTop10 = broadcastTop10;

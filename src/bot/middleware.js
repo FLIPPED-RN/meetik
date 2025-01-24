@@ -1,19 +1,36 @@
-exports.errorHandler = async (ctx, next) => {
+const db = require('../database');
+
+const errorHandler = async (ctx, next) => {
     try {
         await next();
     } catch (error) {
-        console.error('Ошибка в обработчике:', error);
-        await ctx.reply('Произошла ошибка. Попробуйте позже или обратитесь к администратору.');
+        console.error('Ошибка в middleware:', error);
+        await ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.');
     }
 };
 
-exports.userCheck = async (ctx, next) => {
-    if (ctx.from && ['private'].includes(ctx.chat?.type)) {
+const userCheck = async (ctx, next) => {
+    try {
+        // Пропускаем проверку для команды start
+        if (ctx.message && ctx.message.text === '/start') {
+            return next();
+        }
+
+        const user = await db.getUserProfile(ctx.from.id);
+        if (!user) {
+            await ctx.reply('Пожалуйста, зарегистрируйтесь с помощью команды /start');
+            return;
+        }
+        
+        ctx.user = user;
         return next();
+    } catch (error) {
+        console.error('Ошибка при проверке пользователя:', error);
+        await ctx.reply('Произошла ошибка при проверке профиля.');
     }
 };
 
-exports.rateLimit = async (ctx, next) => {
+const rateLimit = async (ctx, next) => {
     const now = Date.now();
     const userId = ctx.from.id;
     
@@ -28,4 +45,70 @@ exports.rateLimit = async (ctx, next) => {
     global.rateLimit[userId] = now;
     
     return next();
+};
+
+const checkSubscription = async (ctx, next) => {
+    try {
+        // Пропускаем только callback check_subscription
+        if (ctx.callbackQuery?.data === 'check_subscription') {
+            return next();
+        }
+
+        // Получаем ID пользователя в зависимости от типа обновления
+        const userId = ctx.from?.id;
+        if (!userId) return next();
+
+        const chatMember = await ctx.telegram.getChatMember('@meetik_info', userId);
+        
+        // Проверяем статус подписки
+        if (['creator', 'administrator', 'member'].includes(chatMember.status)) {
+            return next();
+        }
+
+        // Если пользователь не подписан, отправляем сообщение
+        const keyboard = {
+            inline_keyboard: [
+                [{ text: '📢 Подписаться на канал', url: 'https://t.me/meetik_info' }],
+                [{ text: '🔄 Проверить подписку', callback_data: 'check_subscription' }]
+            ]
+        };
+
+        // Если это callback query, отвечаем через answerCbQuery
+        if (ctx.callbackQuery) {
+            await ctx.answerCbQuery('Необходимо подписаться на канал', { show_alert: true });
+        }
+
+        // Отправляем сообщение о необходимости подписки
+        await ctx.reply(
+            '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
+            { reply_markup: keyboard }
+        );
+        
+        return; // Прерываем выполнение следующих middleware
+        
+    } catch (error) {
+        console.error('Ошибка при проверке подписки:', error);
+        if (error.message.includes('user not found')) {
+            const keyboard = {
+                inline_keyboard: [
+                    [{ text: '📢 Подписаться на канал', url: 'https://t.me/meetik_info' }],
+                    [{ text: '🔄 Проверить подписку', callback_data: 'check_subscription' }]
+                ]
+            };
+            
+            await ctx.reply(
+                '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
+                { reply_markup: keyboard }
+            );
+            return;
+        }
+        return next();
+    }
+};
+
+module.exports = {
+    errorHandler,
+    userCheck,
+    rateLimit,
+    checkSubscription
 }; 
