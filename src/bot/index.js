@@ -118,13 +118,21 @@ async function notifyParticipantsReady() {
 setInterval(async () => {
     try {
         const currentRound = await db.getCurrentGlobalRound();
+        console.log('Проверка текущего раунда:', currentRound);
+        
         if (!currentRound) {
+            console.log('Создание нового раунда...');
             await db.createGlobalRound();
         } else if (new Date(currentRound.rating_end_time) <= new Date()) {
+            console.log('Завершение раунда...');
             const winners = await db.finishGlobalRound();
+            console.log('Победители:', winners);
+            
             if (winners && winners.length > 0) {
-                await broadcastWinners(bot, winners);
+                console.log('Отправка результатов...');
+                await commands.broadcastGlobalResults(bot, winners);
             }
+            console.log('Создание нового раунда...');
             await db.createGlobalRound();
         }
     } catch (error) {

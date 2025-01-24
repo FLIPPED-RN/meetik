@@ -56,7 +56,8 @@ const db = {
                     place INTEGER,
                     coins_received INTEGER,
                     round_end_time TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_global_round BOOLEAN DEFAULT false
                 );
 
                 CREATE TABLE IF NOT EXISTS global_rounds (
@@ -84,7 +85,8 @@ const db = {
                     round_id INTEGER REFERENCES global_rounds(id),
                     total_votes INTEGER DEFAULT 0,
                     total_rating INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (user_id, round_id)
                 );
             `);
             console.log('База данных инициализирована');
@@ -509,21 +511,25 @@ const db = {
                 return [];
             }
 
-            // Получаем анкеты, которые пользователь еще не оценивал в текущем раунде
+            // Используем подзапрос для получения случайной анкеты
             const result = await client.query(`
-                SELECT u.* 
-                FROM users u
-                WHERE u.in_global_rating = true
-                AND u.user_id != $1
-                AND NOT EXISTS (
-                    SELECT 1 
-                    FROM global_votes gv 
-                    WHERE gv.candidate_id = u.user_id 
-                    AND gv.voter_id = $1
-                    AND gv.round_id = $2
+                WITH unrated_profiles AS (
+                    SELECT u.* 
+                    FROM users u
+                    WHERE u.in_global_rating = true
+                    AND u.user_id != $1
+                    AND NOT EXISTS (
+                        SELECT 1 
+                        FROM global_votes gv 
+                        WHERE gv.candidate_id = u.user_id 
+                        AND gv.voter_id = $1
+                        AND gv.round_id = $2
+                    )
                 )
-                ORDER BY RANDOM()
-                LIMIT 10
+                SELECT *
+                FROM unrated_profiles
+                OFFSET floor(random() * (SELECT COUNT(*) FROM unrated_profiles))
+                LIMIT 1
             `, [userId, currentRound.rows[0].id]);
 
             return result.rows;
@@ -566,14 +572,27 @@ const db = {
                 VALUES ($1, $2, $3, $4)
             `, [voterId, candidateId, currentRound.rows[0].id, rating]);
 
-            // Обновляем или создаем запись в global_rating_stats
-            await client.query(`
-                INSERT INTO global_rating_stats (user_id, round_id, total_votes, total_rating)
-                VALUES ($1, $2, 1, $3)
-                ON CONFLICT (user_id, round_id) DO UPDATE 
-                SET total_votes = global_rating_stats.total_votes + 1,
-                    total_rating = global_rating_stats.total_rating + $3
-            `, [candidateId, currentRound.rows[0].id, rating]);
+            // Проверяем существующую статистику
+            const existingStat = await client.query(`
+                SELECT id FROM global_rating_stats 
+                WHERE user_id = $1 AND round_id = $2
+            `, [candidateId, currentRound.rows[0].id]);
+
+            if (existingStat.rows.length > 0) {
+                // Обновляем существующую статистику
+                await client.query(`
+                    UPDATE global_rating_stats 
+                    SET total_votes = total_votes + 1,
+                        total_rating = total_rating + $3
+                    WHERE user_id = $1 AND round_id = $2
+                `, [candidateId, currentRound.rows[0].id, rating]);
+            } else {
+                // Создаем новую запись статистики
+                await client.query(`
+                    INSERT INTO global_rating_stats (user_id, round_id, total_votes, total_rating)
+                    VALUES ($1, $2, 1, $3)
+                `, [candidateId, currentRound.rows[0].id, rating]);
+            }
 
             await client.query('COMMIT');
         } catch (error) {
@@ -589,63 +608,107 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            // Получаем топ-10 участников по сумме оценок из статистики
-            const topParticipants = await client.query(`
-                SELECT 
-                    u.*,
-                    grs.total_votes,
-                    grs.total_rating
-                FROM users u
-                JOIN global_rating_stats grs ON grs.user_id = u.user_id
-                WHERE u.in_global_rating = true
-                AND grs.round_id = (
-                    SELECT id FROM global_rounds 
-                    WHERE is_active = true
-                    LIMIT 1
-                )
-                ORDER BY grs.total_rating DESC, grs.total_votes DESC
-                LIMIT 10
+            console.log('Начало завершения глобального раунда');
+
+            // Получаем текущий активный раунд
+            const currentRound = await client.query(`
+                SELECT id FROM global_rounds 
+                WHERE is_active = true
+                LIMIT 1
             `);
 
-            // Обновляем статусы и начисляем монеты победителям
-            for (let i = 0; i < topParticipants.rows.length; i++) {
-                const participant = topParticipants.rows[i];
-                const coins = i === 0 ? 500 : i === 1 ? 300 : i === 2 ? 100 : 0;
+            if (!currentRound.rows[0]) {
+                console.log('Активный раунд не найден');
+                return [];
+            }
+
+            const roundId = currentRound.rows[0].id;
+            console.log('Обработка раунда ID:', roundId);
+
+            // Получаем всех участников с их рейтингами
+            const participants = await client.query(`
+                WITH participant_stats AS (
+                    SELECT 
+                        u.user_id,
+                        u.name,
+                        u.coins,
+                        COALESCE(AVG(CASE WHEN gv.round_id = $1 THEN gv.rating END), 0) as average_rating,
+                        COUNT(CASE WHEN gv.round_id = $1 THEN gv.voter_id END) as total_votes
+                    FROM users u
+                    LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
+                    WHERE u.in_global_rating = true
+                    GROUP BY u.user_id, u.name, u.coins
+                )
+                SELECT *,
+                    ROW_NUMBER() OVER (ORDER BY average_rating DESC, total_votes DESC) as place
+                FROM participant_stats
+                ORDER BY average_rating DESC, total_votes DESC
+            `, [roundId]);
+
+            console.log('Найдено участников:', participants.rows.length);
+
+            const winners = [];
+
+            // Обрабатываем каждого участника
+            for (const participant of participants.rows) {
+                const place = parseInt(participant.place);
+                let coins = 0;
+
+                // Определяем награду в зависимости от места
+                if (place === 1) coins = 500;
+                else if (place === 2) coins = 300;
+                else if (place === 3) coins = 100;
+
+                console.log(`Обработка участника ${participant.user_id}, место: ${place}, монеты: ${coins}`);
 
                 if (coins > 0) {
+                    // Обновляем баланс монет пользователя
                     await client.query(`
                         UPDATE users 
-                        SET coins = coins + $1,
-                            last_global_win = NOW(),
-                            in_global_rating = false
+                        SET 
+                            coins = COALESCE(coins, 0) + $1,
+                            last_global_win = NOW()
                         WHERE user_id = $2
                     `, [coins, participant.user_id]);
+
+                    // Записываем в историю победителей
+                    await client.query(`
+                        INSERT INTO winners (
+                            user_id, 
+                            place, 
+                            coins_received, 
+                            round_end_time,
+                            is_global_round
+                        ) VALUES ($1, $2, $3, NOW(), true)
+                    `, [participant.user_id, place, coins]);
+
+                    // Отправляем уведомление пользователю
+                    winners.push({
+                        user_id: participant.user_id,
+                        name: participant.name,
+                        place: place,
+                        coins_received: coins,
+                        average_rating: parseFloat(participant.average_rating),
+                        total_votes: parseInt(participant.total_votes)
+                    });
                 }
             }
 
-            // Очищаем все данные глобального рейтинга
-            await client.query(`
-                WITH current_round AS (
-                    SELECT id FROM global_rounds WHERE is_active = true LIMIT 1
-                )
-                DELETE FROM global_rating_stats 
-                WHERE round_id = (SELECT id FROM current_round)
-            `);
-            
-            await client.query(`
-                WITH current_round AS (
-                    SELECT id FROM global_rounds WHERE is_active = true LIMIT 1
-                )
-                DELETE FROM global_votes 
-                WHERE round_id = (SELECT id FROM current_round)
-            `);
-            
+            // Очищаем статусы участия
             await client.query(`UPDATE users SET in_global_rating = false WHERE in_global_rating = true`);
-            await client.query(`UPDATE global_rounds SET is_active = false WHERE is_active = true`);
+            
+            // Завершаем текущий раунд
+            await client.query(`
+                UPDATE global_rounds 
+                SET is_active = false 
+                WHERE id = $1
+            `, [roundId]);
 
             await client.query('COMMIT');
-            return topParticipants.rows;
+            console.log('Победители:', winners);
+            return winners;
         } catch (error) {
+            console.error('Ошибка при завершении глобального раунда:', error);
             await client.query('ROLLBACK');
             throw error;
         } finally {
