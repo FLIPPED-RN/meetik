@@ -441,6 +441,32 @@ exports.registerBotActions = (bot) => {
                 return;
             }
 
+            // Проверяем, участвует ли профиль в глобальном рейтинге
+            const targetProfile = await db.getUserProfile(targetId);
+            if (targetProfile.in_global_rating) {
+                // Сохраняем глобальную оценку
+                await db.saveGlobalVote(ctx.from.id, targetId, rating);
+                await ctx.answerCbQuery('Оценка сохранена!');
+
+                // Получаем следующую глобальную анкету
+                const globalProfiles = await db.getGlobalRatingParticipants(ctx.from.id);
+                
+                if (globalProfiles && globalProfiles.length > 0) {
+                    await sendProfileForRating(ctx, globalProfiles[0]);
+                } else {
+                    // Если глобальные анкеты закончились, сообщаем об этом и показываем обычную анкету
+                    await ctx.reply('Вы оценили все анкеты глобального рейтинга! Теперь вам будут показаны обычные анкеты.');
+                    
+                    const regularProfiles = await db.getProfilesForRating(ctx.from.id);
+                    if (regularProfiles && regularProfiles.length > 0) {
+                        await sendProfileForRating(ctx, regularProfiles[0]);
+                    } else {
+                        await ctx.reply('На данный момент доступных анкет больше нет. Попробуйте позже! 😊', mainMenu);
+                    }
+                }
+                return;
+            }
+
             // Обычная оценка
             const result = await db.saveRating(targetId, ctx.from.id, rating);
             await ctx.answerCbQuery('Оценка сохранена!');
@@ -460,13 +486,11 @@ exports.registerBotActions = (bot) => {
 
                 try {
                     if (photo) {
-                        // Отправляем фото с подписью
                         await ctx.telegram.sendPhoto(targetId, photo, {
                             caption: notificationText,
                             parse_mode: 'MarkdownV2'
                         });
                     } else {
-                        // Если фото нет, отправляем только текст
                         await ctx.telegram.sendMessage(targetId, notificationText, {
                             parse_mode: 'MarkdownV2'
                         });

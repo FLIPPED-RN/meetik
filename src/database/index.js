@@ -626,7 +626,7 @@ const db = {
                 AND is_final_voting = false
             `);
 
-            // Получаем все анкеты (и глобальные, и обычные) с приоритетом глобальных
+            // Получаем анкеты, исключая те, за которые уже проголосовали
             const profiles = await client.query(`
                 WITH all_profiles AS (
                     SELECT 
@@ -641,7 +641,7 @@ const db = {
                     LEFT JOIN photos p ON u.user_id = p.user_id
                     WHERE u.user_id != $1
                     AND (
-                        -- Для глобальных анкет
+                        -- Для глобальных анкет: проверяем что пользователь не голосовал
                         (u.in_global_rating = true 
                         AND NOT EXISTS (
                             SELECT 1 
@@ -650,27 +650,18 @@ const db = {
                             AND gv.voter_id = $1
                             AND gv.round_id = $2
                         ))
-                        OR
-                        -- Для обычных анкет
-                        (u.in_global_rating = false 
-                        AND NOT EXISTS (
-                            SELECT 1 
-                            FROM ratings r 
-                            WHERE r.to_user_id = u.user_id 
-                            AND r.from_user_id = $1
-                            AND r.created_at > NOW() - INTERVAL '1 hour'
-                        ))
                     )
                     GROUP BY u.user_id
                 )
                 SELECT *
                 FROM all_profiles
-                ORDER BY priority, RANDOM()
+                WHERE is_global = true  -- Берем только глобальные анкеты
+                ORDER BY RANDOM()
                 LIMIT 1
             `, [userId, currentRound.rows[0]?.id]);
 
             if (profiles.rows.length === 0) {
-                return { noMoreProfiles: true };
+                return [];
             }
 
             return profiles.rows;
