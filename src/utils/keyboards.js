@@ -39,8 +39,9 @@ exports.editProfileKeyboard = {
             [{ text: '🎂 Изменить возраст', callback_data: 'edit_age' }],
             [{ text: '🌆 Изменить город', callback_data: 'edit_city' }],
             [{ text: '📄 Изменить описание', callback_data: 'edit_description' }],
+            [{ text: '📸 Изменить фото', callback_data: 'edit_photos' }],
             [{ text: '🔄 Изменить предпочтения', callback_data: 'edit_preferences' }],
-            [{ text: '🔙 Назад', callback_data: 'back_to_profile' }]
+            [{ text: '🔙 Назад', callback_data: 'cancel_edit' }]
         ]
     }
 };
