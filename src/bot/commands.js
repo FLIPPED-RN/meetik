@@ -665,61 +665,6 @@ exports.registerBotActions = (bot) => {
             await ctx.answerCbQuery('Произошла ошибка при проверке подписки');
         }
     });
-
-    bot.action('edit_profile', async (ctx) => {
-        try {
-            await ctx.reply('Выберите, что хотите изменить:', editProfileKeyboard);
-        } catch (error) {
-            console.error('Ошибка при редактировании профиля:', error);
-            await ctx.reply('Произошла ошибка при редактировании профиля.');
-        }
-    });
-
-    bot.action('edit_preferences', async (ctx) => {
-        try {
-            // Удаляем старое сообщение
-            await ctx.deleteMessage();
-            
-            // Отправляем новое сообщение с клавиатурой
-            await ctx.reply('Выберите, кого вы хотите видеть:', editPreferencesKeyboard);
-        } catch (error) {
-            console.error('Ошибка при показе клавиатуры предпочтений:', error);
-            await ctx.reply('Произошла ошибка. Попробуйте еще раз.');
-        }
-    });
-
-    bot.action(/^set_preferences_(male|female|any)$/, async (ctx) => {
-        try {
-            const preference = ctx.match[1];
-            await db.updateUserProfile(ctx.from.id, { preferences: preference });
-            
-            let preferenceText;
-            switch (preference) {
-                case 'female':
-                    preferenceText = 'девушек';
-                    break;
-                case 'male':
-                    preferenceText = 'парней';
-                    break;
-                case 'any':
-                    preferenceText = 'все анкеты';
-                    break;
-            }
-            
-            // Удаляем клавиатуру выбора предпочтений
-            await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
-            await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`);
-            
-            // Показываем следующую анкету с учетом новых предпочтений
-            const nextProfile = await db.getNextProfile(ctx.from.id);
-            if (nextProfile) {
-                await sendProfileForRating(ctx, nextProfile);
-            }
-        } catch (error) {
-            console.error('Ошибка при сохранении предпочтений:', error);
-            await ctx.reply('Произошла ошибка при сохранении предпочтений.');
-        }
-    });
 };
 
 async function startFinalVoting(bot) {

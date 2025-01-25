@@ -1,6 +1,6 @@
 const { Scenes } = require('telegraf');
 const validators = require('../utils/validators');
-const { mainMenu, editProfileKeyboard } = require('../utils/keyboards');
+const { mainMenu, editProfileKeyboard, editPreferencesKeyboard } = require('../utils/keyboards');
 const db = require('../database');
 
 const editProfileScene = new Scenes.WizardScene(
@@ -48,6 +48,24 @@ const editProfileScene = new Scenes.WizardScene(
             case 'edit_photos':
                 ctx.wizard.state.photos = [];
                 await ctx.reply('Отправьте новую фотографию. Старое фото будет заменено.');
+                break;
+            case 'edit_preferences':
+                await ctx.reply('Выберите, кого вы хотите видеть:', editPreferencesKeyboard);
+                break;
+            case 'set_preferences_male':
+            case 'set_preferences_female':
+            case 'set_preferences_any':
+                const preference = action.split('_')[2];
+                await db.updateUserField(ctx.from.id, 'preferences', preference);
+                
+                const preferenceText = {
+                    'male': 'парней',
+                    'female': 'девушек',
+                    'any': 'все анкеты'
+                }[preference];
+                
+                await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`, mainMenu);
+                return ctx.scene.leave();
                 break;
         }
         return ctx.wizard.next();
