@@ -805,53 +805,68 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            // Получаем всех участников глобального рейтинга
+            // Получаем всех участников глобального рейтинга с их оценками
             const participants = await client.query(`
-                SELECT user_id, name, age, city, description 
-                FROM users 
-                WHERE in_global_rating = true
+                WITH participant_stats AS (
+                    SELECT 
+                        u.user_id,
+                        u.name,
+                        COUNT(gv.rating) as total_votes,
+                        COALESCE(AVG(gv.rating), 0) as avg_rating
+                    FROM users u
+                    LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
+                    WHERE u.in_global_rating = true
+                    GROUP BY u.user_id, u.name
+                )
+                SELECT 
+                    *,
+                    RANK() OVER (ORDER BY avg_rating DESC, total_votes DESC) as place
+                FROM participant_stats
             `);
 
-            if (participants.rows.length === 0) {
-                return null;
-            }
-
-            // Перемешиваем участников и выбираем до 3 победителей
-            const shuffled = participants.rows.sort(() => 0.5 - Math.random());
-            const winners = shuffled.slice(0, Math.min(3, shuffled.length));
+            const allParticipants = participants.rows;
+            const winners = allParticipants.filter(p => p.place <= 3);
             const prizes = [500, 300, 100];
+            const notifications = [];
 
-            // Обрабатываем каждого победителя
-            for (let i = 0; i < winners.length; i++) {
-                const winner = winners[i];
-                const prize = prizes[i];
+            // Обрабатываем каждого участника
+            for (const participant of allParticipants) {
+                let message;
+                let coins = 0;
 
-                // Начисляем монеты и обновляем время последней победы
+                if (participant.place <= 3) {
+                    coins = prizes[participant.place - 1];
+                    message = `🎉 Поздравляем! Вы заняли ${participant.place} место и получили ${coins} монет!`;
+                } else {
+                    message = 'К сожалению, вы не попали в топ-3 в этом раунде. Не отчаивайтесь и попробуйте снова! 💪';
+                }
+
+                // Обновляем монеты и статус участия
                 await client.query(`
                     UPDATE users 
-                    SET coins = coins + $1,
-                        last_global_win = NOW(),
-                        in_global_rating = false
-                    WHERE user_id = $2
-                    RETURNING *
-                `, [prize, winner.user_id]);
+                    SET coins = CASE 
+                        WHEN user_id = $1 THEN coins + $2
+                        ELSE coins
+                    END,
+                    last_global_win = CASE 
+                        WHEN user_id = $1 AND $2 > 0 THEN NOW()
+                        ELSE last_global_win
+                    END,
+                    in_global_rating = false
+                    WHERE user_id = $1
+                `, [participant.user_id, coins]);
 
-                winners[i].place = i + 1;
-                winners[i].coins_received = prize;
-            }
-
-            // Сбрасываем статус участия для остальных
-            if (winners.length > 0) {
-                await client.query(`
-                    UPDATE users 
-                    SET in_global_rating = false 
-                    WHERE in_global_rating = true 
-                    AND user_id NOT IN (${winners.map(w => w.user_id).join(',')})
-                `);
+                notifications.push({
+                    user_id: participant.user_id,
+                    message: message
+                });
             }
 
             await client.query('COMMIT');
-            return winners;
+            return {
+                winners,
+                notifications
+            };
         } catch (error) {
             await client.query('ROLLBACK');
             throw error;

@@ -129,28 +129,22 @@ setInterval(async () => {
             
             if (!isInRewardPhase && now >= endTime) {
                 console.log('Завершение основной фазы раунда...');
-                // Устанавливаем флаг фазы награждения и добавляем 1 минуту для выдачи наград
-                await db.query(`
-                    UPDATE global_rounds 
-                    SET is_reward_phase = true,
-                    reward_end_time = NOW() + INTERVAL '1 minute'
-                    WHERE id = $1
-                `, [currentRound.id]);
                 
-                const winners = await db.finishGlobalRound();
-                if (winners && winners.notifications) {
-                    console.log('Отправка уведомлений победителям...');
-                    await commands.broadcastGlobalResults(bot, winners);
+                const results = await db.finishGlobalRound();
+                if (results && results.notifications) {
+                    // Отправляем уведомления всем участникам
+                    for (const notification of results.notifications) {
+                        try {
+                            await bot.telegram.sendMessage(
+                                notification.user_id,
+                                notification.message
+                            );
+                        } catch (error) {
+                            console.error(`Ошибка отправки уведомления пользователю ${notification.user_id}:`, error);
+                        }
+                    }
                 }
-            } else if (isInRewardPhase && now >= new Date(currentRound.reward_end_time)) {
-                console.log('Завершение фазы награждения...');
-                // Сбрасываем статус участия для оставшихся участников
-                await db.query(`
-                    UPDATE users 
-                    SET in_global_rating = false 
-                    WHERE in_global_rating = true
-                `);
-                
+
                 // Создаем новый раунд
                 await db.createGlobalRound();
             }
