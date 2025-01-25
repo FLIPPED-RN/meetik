@@ -677,19 +677,11 @@ exports.registerBotActions = (bot) => {
 
     bot.action('edit_preferences', async (ctx) => {
         try {
-            // Отвечаем на callback query, чтобы убрать "часики" на кнопке
-            await ctx.answerCbQuery();
-            
-            // Отправляем новое сообщение с клавиатурой выбора предпочтений
-            await ctx.reply('Кого вы хотите найти?', editPreferencesKeyboard);
-            
-            // Удаляем предыдущее сообщение с кнопкой редактирования
-            if (ctx.callbackQuery?.message) {
-                await ctx.deleteMessage(ctx.callbackQuery.message.message_id);
-            }
+            // Просто показываем клавиатуру с выбором предпочтений
+            await ctx.editMessageReplyMarkup(editPreferencesKeyboard.reply_markup);
         } catch (error) {
-            console.error('Ошибка при изменении предпочтений:', error);
-            await ctx.reply('Произошла ошибка при изменении предпочтений.');
+            console.error('Ошибка при показе клавиатуры предпочтений:', error);
+            await ctx.reply('Произошла ошибка. Попробуйте еще раз.');
         }
     });
 
@@ -711,6 +703,8 @@ exports.registerBotActions = (bot) => {
                     break;
             }
             
+            // Удаляем клавиатуру выбора предпочтений
+            await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
             await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`);
             
             // Показываем следующую анкету с учетом новых предпочтений
