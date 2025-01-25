@@ -665,6 +665,63 @@ exports.registerBotActions = (bot) => {
             await ctx.answerCbQuery('Произошла ошибка при проверке подписки');
         }
     });
+
+    bot.action('edit_profile', async (ctx) => {
+        try {
+            const keyboard = {
+                inline_keyboard: [
+                    [{ text: '📝 Изменить имя', callback_data: 'edit_name' }],
+                    [{ text: '🎂 Изменить возраст', callback_data: 'edit_age' }],
+                    [{ text: '🌆 Изменить город', callback_data: 'edit_city' }],
+                    [{ text: '📄 Изменить описание', callback_data: 'edit_description' }],
+                    [{ text: '🔄 Изменить предпочтения', callback_data: 'edit_preferences' }],
+                    [{ text: '🔙 Назад', callback_data: 'back_to_profile' }]
+                ]
+            };
+            
+            await ctx.reply('Выберите, что хотите изменить:', { reply_markup: keyboard });
+        } catch (error) {
+            console.error('Ошибка при редактировании профиля:', error);
+            await ctx.reply('Произошла ошибка при редактировании профиля.');
+        }
+    });
+
+    bot.action('edit_preferences', async (ctx) => {
+        try {
+            const keyboard = {
+                inline_keyboard: [
+                    [
+                        { text: '👩 Девушки', callback_data: 'set_preferences_female' },
+                        { text: '👨 Парни', callback_data: 'set_preferences_male' }
+                    ]
+                ]
+            };
+            
+            await ctx.reply('Кого вы хотите найти?', { reply_markup: keyboard });
+        } catch (error) {
+            console.error('Ошибка при изменении предпочтений:', error);
+            await ctx.reply('Произошла ошибка при изменении предпочтений.');
+        }
+    });
+
+    bot.action(/^set_preferences_(male|female)$/, async (ctx) => {
+        try {
+            const preference = ctx.match[1];
+            await db.updateUserProfile(ctx.from.id, { preferences: preference });
+            
+            const preferenceText = preference === 'female' ? 'девушек' : 'парней';
+            await ctx.reply(`✅ Теперь вы будете видеть анкеты ${preferenceText}`);
+            
+            // Показываем следующую анкету с учетом новых предпочтений
+            const nextProfile = await db.getNextProfile(ctx.from.id);
+            if (nextProfile) {
+                await sendProfileForRating(ctx, nextProfile);
+            }
+        } catch (error) {
+            console.error('Ошибка при сохранении предпочтений:', error);
+            await ctx.reply('Произошла ошибка при сохранении предпочтений.');
+        }
+    });
 };
 
 async function startFinalVoting(bot) {

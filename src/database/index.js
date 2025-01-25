@@ -386,11 +386,15 @@ const db = {
     },
 
     getNextProfile: async (userId) => {
+        const user = await pool.query('SELECT preferences FROM users WHERE user_id = $1', [userId]);
+        const userPreferences = user.rows[0]?.preferences;
+
         const result = await pool.query(`
             SELECT u.*, array_agg(p.photo_id) as photos
             FROM users u
             LEFT JOIN photos p ON u.user_id = p.user_id
             WHERE u.user_id != $1
+            AND u.gender = $2
             AND (
                 -- Показываем профиль если:
                 (
@@ -431,7 +435,7 @@ const db = {
             GROUP BY u.user_id
             ORDER BY u.in_global_rating DESC, RANDOM()
             LIMIT 1
-        `, [userId]);
+        `, [userId, userPreferences]);
 
         return result.rows[0];
     },
@@ -528,11 +532,15 @@ const db = {
     },
 
     getProfilesForRating: async (userId) => {
+        const user = await pool.query('SELECT preferences FROM users WHERE user_id = $1', [userId]);
+        const userPreferences = user.rows[0]?.preferences;
+
         const result = await pool.query(`
             SELECT u.*, array_agg(p.photo_id) as photos
             FROM users u
             LEFT JOIN photos p ON u.user_id = p.user_id
             WHERE u.user_id != $1
+            AND u.gender = $2
             AND u.in_global_rating = false
             AND NOT EXISTS (
                 SELECT 1 
@@ -544,7 +552,7 @@ const db = {
             GROUP BY u.user_id
             ORDER BY RANDOM()
             LIMIT 10
-        `, [userId]);
+        `, [userId, userPreferences]);
         return result.rows;
     },
 
@@ -874,6 +882,35 @@ const db = {
         } finally {
             client.release();
         }
+    },
+
+    updateUserProfile: async (userId, updates) => {
+        const allowedFields = ['name', 'age', 'city', 'description', 'preferences'];
+        const validUpdates = {};
+        
+        // Фильтруем только разрешенные поля
+        for (const field of allowedFields) {
+            if (updates[field] !== undefined) {
+                validUpdates[field] = updates[field];
+            }
+        }
+        
+        if (Object.keys(validUpdates).length === 0) return null;
+        
+        const setClause = Object.keys(validUpdates)
+            .map((key, index) => `${key} = $${index + 2}`)
+            .join(', ');
+        
+        const values = [userId, ...Object.values(validUpdates)];
+        
+        const result = await pool.query(`
+            UPDATE users 
+            SET ${setClause}
+            WHERE user_id = $1
+            RETURNING *
+        `, values);
+        
+        return result.rows[0];
     },
 }
 
