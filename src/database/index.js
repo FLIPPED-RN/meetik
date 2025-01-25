@@ -283,7 +283,7 @@ const db = {
 
                     // Получаем фото пользователя
                     const photos = await client.query(`
-                        SELECT photo_id FROM photos WHERE user_id = $1 LIMIT 1
+                        SELECT photo_id FROM photos WHERE user_id = $1
                     `, [fromUserId]);
 
                     // Возвращаем объект с информацией для уведомления
@@ -293,7 +293,7 @@ const db = {
                         rating,
                         raterInfo: raterInfo.rows[0],
                         coinsAdded: coinsToAdd,
-                        photo: photos.rows[0]?.photo_id
+                        photos: photos.rows.map(row => row.photo_id)
                     };
                 }
             }

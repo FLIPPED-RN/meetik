@@ -47,7 +47,7 @@ const editProfileScene = new Scenes.WizardScene(
                 break;
             case 'edit_photos':
                 ctx.wizard.state.photos = [];
-                await ctx.reply('Отправьте новые фотографии (минимум 1, максимум 3). Старые фото будут заменены.');
+                await ctx.reply('Отправьте новую фотографию. Старое фото будет заменено.');
                 break;
         }
         return ctx.wizard.next();
@@ -97,41 +97,21 @@ const editProfileScene = new Scenes.WizardScene(
                     break;
 
                 case 'edit_photos':
-                    if (ctx.callbackQuery?.data === 'photos_done') {
-                        if (ctx.wizard.state.photos && ctx.wizard.state.photos.length > 0) {
-                            await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
-                            await ctx.reply('Фотографии сохранены!', mainMenu);
-                            return ctx.scene.leave();
-                        } else {
-                            await ctx.reply('Пожалуйста, отправьте хотя бы одну фотографию');
-                            return;
-                        }
-                    }
-
                     if (!ctx.message?.photo) {
                         await ctx.reply('Пожалуйста, отправьте фотографию');
                         return;
                     }
                     
-                    if (!ctx.wizard.state.photos) {
-                        ctx.wizard.state.photos = [];
-                    }
-                    ctx.wizard.state.photos.push(ctx.message.photo[ctx.message.photo.length - 1].file_id);
-                    
-                    if (ctx.wizard.state.photos.length < 3) {
-                        await ctx.reply(`Фото ${ctx.wizard.state.photos.length} добавлено! Отправьте еще ${3 - ctx.wizard.state.photos.length} фото или нажмите кнопку "Готово"`, {
-                            reply_markup: {
-                                inline_keyboard: [[
-                                    { text: 'Готово', callback_data: 'photos_done' }
-                                ]]
-                            }
-                        });
+                    const photo = ctx.message.photo[ctx.message.photo.length - 1];
+                    if (!validators.photo(photo)) {
+                        await ctx.reply('Фото слишком большое. Максимальный размер - 5MB');
                         return;
-                    } else {
-                        await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
-                        await ctx.reply('Все фотографии загружены!', mainMenu);
-                        return ctx.scene.leave();
                     }
+                    
+                    ctx.wizard.state.photos = [photo.file_id];
+                    await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
+                    await ctx.reply('Фотография обновлена!', mainMenu);
+                    return ctx.scene.leave();
                     break;
             }
 

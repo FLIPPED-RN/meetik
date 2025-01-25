@@ -61,7 +61,7 @@ const registrationScene = new Scenes.WizardScene(
         ctx.wizard.state.preferences = preferences;
         
         ctx.wizard.state.photos = [];
-        await ctx.reply('Отправьте свою фотографию (минимум 1, максимум 3 фото)');
+        await ctx.reply('Отправьте свою фотографию (обязательно)');
         return ctx.wizard.next();
     },
     async (ctx) => {
@@ -73,37 +73,19 @@ const registrationScene = new Scenes.WizardScene(
             }
             
             const photoId = photo.file_id;
-            ctx.wizard.state.photos.push(photoId);
+            ctx.wizard.state.photos = [photoId];
             
-            const buttons = [];
-            if (ctx.wizard.state.photos.length < 3) {
-                buttons.push([{ text: 'Добавить еще фото', callback_data: 'more_photo' }]);
-            }
-            if (ctx.wizard.state.photos.length >= 1) {
-                buttons.push([{ text: 'Продолжить', callback_data: 'continue_registration' }]);
-            }
-
-            await ctx.reply(`Фото добавлено! (${ctx.wizard.state.photos.length}/3)`, {
-                reply_markup: { inline_keyboard: buttons }
-            });
-        } else if (ctx.callbackQuery) {
-            if (ctx.callbackQuery.data === 'more_photo') {
-                await ctx.reply('Отправьте следующее фото');
-                return;
-            } else if (ctx.callbackQuery.data === 'continue_registration') {
-                if (ctx.wizard.state.photos.length === 0) {
-                    await ctx.reply('Необходимо добавить хотя бы одно фото');
-                    return;
+            await ctx.reply('Расскажите немного о себе (до 500 символов) или нажмите кнопку "Пропустить"', {
+                reply_markup: {
+                    inline_keyboard: [[
+                        { text: 'Пропустить', callback_data: 'skip_description' }
+                    ]]
                 }
-                await ctx.reply('Расскажите немного о себе (до 500 символов) или нажмите кнопку "Пропустить"', {
-                    reply_markup: {
-                        inline_keyboard: [[
-                            { text: 'Пропустить', callback_data: 'skip_description' }
-                        ]]
-                    }
-                });
-                return ctx.wizard.next();
-            }
+            });
+            return ctx.wizard.next();
+        } else {
+            await ctx.reply('Пожалуйста, отправьте фотографию');
+            return;
         }
     },
     async (ctx) => {

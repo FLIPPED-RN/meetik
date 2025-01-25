@@ -145,15 +145,16 @@ exports.leadersCommand = async (ctx) => {
 
 exports.whoRatedMeCommand = (bot) => async (ctx) => {
     try {
+        // Получаем все уникальные оценки один раз
         const ratings = await db.getLastRatings(ctx.from.id);
-        
-        if (!ratings || ratings.length === 0) {
-            return ctx.reply('Пока никто не оценил ваш профиль.');
-        }
-
         const uniqueRatings = ratings.filter((rating, index, self) =>
             index === self.findIndex((r) => r.from_user_id === rating.from_user_id)
-        ).slice(0, 10);
+        );
+        const totalRatings = uniqueRatings.length;
+
+        if (totalRatings === 0) {
+            return await ctx.reply('У вас пока нет оценок 😔');
+        }
 
         const showRating = async (ctx, index) => {
             try {
@@ -165,13 +166,28 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
                     raterProfile.username.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1') : '';
 
                 const keyboard = {
-                    inline_keyboard: profileNavigationKeyboard(index, uniqueRatings.length).inline_keyboard
+                    inline_keyboard: [
+                        [
+                            {
+                                text: '⬅️',
+                                callback_data: `rating_prev_${index}`
+                            },
+                            {
+                                text: `${index + 1}/${totalRatings}`,
+                                callback_data: 'rating_count'
+                            },
+                            {
+                                text: '➡️',
+                                callback_data: `rating_next_${index}`
+                            }
+                        ]
+                    ]
                 };
 
                 const caption = `👤 *${raterProfile.name}*, ${raterProfile.age} лет\n` +
                               `🌆 ${raterProfile.city}\n` +
                               `⭐️ Оценка: ${rating.rating}/10\n` +
-                              `${raterProfile.username ? `📱 @${escapedUsername}\n` : ''}`;
+                              `${raterProfile.username && rating.rating >= 7 ? `📱 @${escapedUsername}\n` : ''}`;
 
                 if (ctx.callbackQuery) {
                     if (photos.length > 0) {
@@ -212,17 +228,17 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         // Показываем первую оценку
         await showRating(ctx, 0);
 
-        // Обработчики кнопок навигации
+        // Обработчики кнопок навигации используют тот же массив uniqueRatings
         bot.action(/rating_prev_(\d+)/, async (ctx) => {
             const index = parseInt(ctx.match[1]);
-            const newIndex = index > 0 ? index - 1 : uniqueRatings.length - 1;
+            const newIndex = index > 0 ? index - 1 : totalRatings - 1;
             await ctx.answerCbQuery();
             await showRating(ctx, newIndex);
         });
 
         bot.action(/rating_next_(\d+)/, async (ctx) => {
             const index = parseInt(ctx.match[1]);
-            const newIndex = index < uniqueRatings.length - 1 ? index + 1 : 0;
+            const newIndex = index < totalRatings - 1 ? index + 1 : 0;
             await ctx.answerCbQuery();
             await showRating(ctx, newIndex);
         });
@@ -369,6 +385,8 @@ async function broadcastTop10(bot) {
     }
 }
 
+exports.broadcastGlobalResults = broadcastGlobalResults;
+
 async function broadcastGlobalResults(bot, winners) {
     try {
         const users = await db.getAllUsers();
@@ -453,10 +471,16 @@ exports.viewProfileCommand = async (ctx) => {
 exports.registerBotActions = (bot) => {
     bot.action(/^rate_(\d+)_(\d+)$/, async (ctx) => {
         try {
+            // Пытаемся заблокировать повторные нажатия
+            await ctx.answerCbQuery('Обработка...');
+            
+            // Удаляем кнопки сразу после нажатия
+            await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+
             const [, targetId, rating] = ctx.match.map(Number);
             
             if (targetId === ctx.from.id) {
-                await ctx.answerCbQuery('Вы не можете оценивать свой профиль!');
+                await ctx.reply('Вы не можете оценивать свой профиль!');
                 return;
             }
 
@@ -465,7 +489,6 @@ exports.registerBotActions = (bot) => {
             if (targetProfile.in_global_rating) {
                 // Сохраняем глобальную оценку
                 await db.saveGlobalVote(ctx.from.id, targetId, rating);
-                await ctx.answerCbQuery('Оценка сохранена!');
 
                 // Получаем следующую глобальную анкету
                 const globalProfiles = await db.getGlobalRatingParticipants(ctx.from.id);
@@ -473,7 +496,6 @@ exports.registerBotActions = (bot) => {
                 if (globalProfiles && globalProfiles.length > 0) {
                     await sendProfileForRating(ctx, globalProfiles[0]);
                 } else {
-                    // Если глобальные анкеты закончились, сообщаем об этом и показываем обычную анкету
                     await ctx.reply('Вы оценили все анкеты глобального рейтинга! Теперь вам будут показаны обычные анкеты.');
                     
                     const regularProfiles = await db.getProfilesForRating(ctx.from.id);
@@ -492,7 +514,7 @@ exports.registerBotActions = (bot) => {
 
             // Отправляем уведомление только для высоких оценок (7-10)
             if (result && result.shouldNotify) {
-                const { raterInfo, photo } = result;
+                const { raterInfo, photos } = result;
                 const escapedUsername = raterInfo.username ? 
                     raterInfo.username.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1') : '';
 
@@ -504,8 +526,8 @@ exports.registerBotActions = (bot) => {
                                       `${raterInfo.username ? `\n📱 @${escapedUsername}` : ''}\n`;
 
                 try {
-                    if (photo) {
-                        await ctx.telegram.sendPhoto(targetId, photo, {
+                    if (photos && photos.length > 0) {
+                        await ctx.telegram.sendPhoto(targetId, photos[0], {
                             caption: notificationText,
                             parse_mode: 'MarkdownV2'
                         });
