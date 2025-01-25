@@ -677,19 +677,19 @@ exports.registerBotActions = (bot) => {
 
     bot.action('edit_preferences', async (ctx) => {
         try {
-            // Сразу показываем клавиатуру с выбором предпочтений
-            await ctx.editMessageText('Кого вы хотите найти?', {
-                reply_markup: editPreferencesKeyboard.reply_markup
-            });
-        } catch (error) {
-            // Если не удалось отредактировать сообщение (например, оно слишком старое),
-            // отправляем новое
-            if (error.description.includes('message is not modified')) {
-                await ctx.reply('Кого вы хотите найти?', editPreferencesKeyboard);
-            } else {
-                console.error('Ошибка при изменении предпочтений:', error);
-                await ctx.reply('Произошла ошибка при изменении предпочтений.');
+            // Отвечаем на callback query, чтобы убрать "часики" на кнопке
+            await ctx.answerCbQuery();
+            
+            // Отправляем новое сообщение с клавиатурой выбора предпочтений
+            await ctx.reply('Кого вы хотите найти?', editPreferencesKeyboard);
+            
+            // Удаляем предыдущее сообщение с кнопкой редактирования
+            if (ctx.callbackQuery?.message) {
+                await ctx.deleteMessage(ctx.callbackQuery.message.message_id);
             }
+        } catch (error) {
+            console.error('Ошибка при изменении предпочтений:', error);
+            await ctx.reply('Произошла ошибка при изменении предпочтений.');
         }
     });
 
