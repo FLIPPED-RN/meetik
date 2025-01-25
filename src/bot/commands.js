@@ -677,8 +677,11 @@ exports.registerBotActions = (bot) => {
 
     bot.action('edit_preferences', async (ctx) => {
         try {
-            // Просто показываем клавиатуру с выбором предпочтений
-            await ctx.editMessageReplyMarkup(editPreferencesKeyboard.reply_markup);
+            // Удаляем старое сообщение
+            await ctx.deleteMessage();
+            
+            // Отправляем новое сообщение с клавиатурой
+            await ctx.reply('Выберите, кого вы хотите видеть:', editPreferencesKeyboard);
         } catch (error) {
             console.error('Ошибка при показе клавиатуры предпочтений:', error);
             await ctx.reply('Произошла ошибка. Попробуйте еще раз.');
