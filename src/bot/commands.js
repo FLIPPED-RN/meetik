@@ -1,4 +1,4 @@
-const { mainMenu, ratingKeyboard, profileNavigationKeyboard, editProfileButton } = require('../utils/keyboards');
+const { mainMenu, ratingKeyboard, profileNavigationKeyboard, editProfileButton, editProfileKeyboard, editPreferencesKeyboard } = require('../utils/keyboards');
 const { formatDate } = require('../utils/helpers');
 const { viewProfileButton } = require('../utils/keyboards');
 const db = require('../database');
@@ -668,18 +668,7 @@ exports.registerBotActions = (bot) => {
 
     bot.action('edit_profile', async (ctx) => {
         try {
-            const keyboard = {
-                inline_keyboard: [
-                    [{ text: '📝 Изменить имя', callback_data: 'edit_name' }],
-                    [{ text: '🎂 Изменить возраст', callback_data: 'edit_age' }],
-                    [{ text: '🌆 Изменить город', callback_data: 'edit_city' }],
-                    [{ text: '📄 Изменить описание', callback_data: 'edit_description' }],
-                    [{ text: '🔄 Изменить предпочтения', callback_data: 'edit_preferences' }],
-                    [{ text: '🔙 Назад', callback_data: 'back_to_profile' }]
-                ]
-            };
-            
-            await ctx.reply('Выберите, что хотите изменить:', { reply_markup: keyboard });
+            await ctx.reply('Выберите, что хотите изменить:', editProfileKeyboard);
         } catch (error) {
             console.error('Ошибка при редактировании профиля:', error);
             await ctx.reply('Произошла ошибка при редактировании профиля.');
@@ -688,16 +677,7 @@ exports.registerBotActions = (bot) => {
 
     bot.action('edit_preferences', async (ctx) => {
         try {
-            const keyboard = {
-                inline_keyboard: [
-                    [
-                        { text: '👩 Девушки', callback_data: 'set_preferences_female' },
-                        { text: '👨 Парни', callback_data: 'set_preferences_male' }
-                    ]
-                ]
-            };
-            
-            await ctx.reply('Кого вы хотите найти?', { reply_markup: keyboard });
+            await ctx.reply('Кого вы хотите найти?', editPreferencesKeyboard);
         } catch (error) {
             console.error('Ошибка при изменении предпочтений:', error);
             await ctx.reply('Произошла ошибка при изменении предпочтений.');
