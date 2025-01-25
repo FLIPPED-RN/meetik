@@ -118,27 +118,47 @@ async function notifyParticipantsReady() {
 setInterval(async () => {
     try {
         const currentRound = await db.getCurrentGlobalRound();
-        console.log('Проверка текущего раунда:', currentRound);
+        const now = new Date();
         
         if (!currentRound) {
             console.log('Создание нового раунда...');
             await db.createGlobalRound();
-        } else if (new Date(currentRound.rating_end_time) <= new Date()) {
-            console.log('Завершение раунда...');
-            const winners = await db.finishGlobalRound();
-            console.log('Победители:', winners);
+        } else {
+            const endTime = new Date(currentRound.rating_end_time);
+            const isInRewardPhase = currentRound.is_reward_phase;
             
-            if (winners && winners.length > 0) {
-                console.log('Отправка результатов...');
-                await commands.broadcastGlobalResults(bot, winners);
+            if (!isInRewardPhase && now >= endTime) {
+                console.log('Завершение основной фазы раунда...');
+                // Устанавливаем флаг фазы награждения и добавляем 1 минуту для выдачи наград
+                await db.query(`
+                    UPDATE global_rounds 
+                    SET is_reward_phase = true,
+                    reward_end_time = NOW() + INTERVAL '1 minute'
+                    WHERE id = $1
+                `, [currentRound.id]);
+                
+                const winners = await db.finishGlobalRound();
+                if (winners && winners.notifications) {
+                    console.log('Отправка уведомлений победителям...');
+                    await commands.broadcastGlobalResults(bot, winners);
+                }
+            } else if (isInRewardPhase && now >= new Date(currentRound.reward_end_time)) {
+                console.log('Завершение фазы награждения...');
+                // Сбрасываем статус участия для оставшихся участников
+                await db.query(`
+                    UPDATE users 
+                    SET in_global_rating = false 
+                    WHERE in_global_rating = true
+                `);
+                
+                // Создаем новый раунд
+                await db.createGlobalRound();
             }
-            console.log('Создание нового раунда...');
-            await db.createGlobalRound();
         }
     } catch (error) {
         console.error('Ошибка обновления глобального раунда:', error);
     }
-}, 60 * 1000);
+}, 10 * 1000); // Проверка каждые 10 секунд
 
 async function sendWinnersMessage(bot, userId, winners) {
     try {
