@@ -35,12 +35,23 @@ exports.preferencesKeyboard = {
 exports.editProfileKeyboard = {
     reply_markup: {
         inline_keyboard: [
-            [{ text: '📝 Имя', callback_data: 'edit_name' }],
-            [{ text: '🎂 Возраст', callback_data: 'edit_age' }],
-            [{ text: '🌆 Город', callback_data: 'edit_city' }],
-            [{ text: '📄 Описание', callback_data: 'edit_description' }],
-            [{ text: '🖼 Фотографии', callback_data: 'edit_photos' }],
-            [{ text: '❌ Отмена', callback_data: 'cancel_edit' }]
+            [{ text: '📝 Изменить имя', callback_data: 'edit_name' }],
+            [{ text: '🎂 Изменить возраст', callback_data: 'edit_age' }],
+            [{ text: '🌆 Изменить город', callback_data: 'edit_city' }],
+            [{ text: '📄 Изменить описание', callback_data: 'edit_description' }],
+            [{ text: '🔄 Изменить предпочтения', callback_data: 'edit_preferences' }],
+            [{ text: '🔙 Назад', callback_data: 'back_to_profile' }]
+        ]
+    }
+};
+
+exports.editPreferencesKeyboard = {
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: '👩 Девушки', callback_data: 'set_preferences_female' },
+                { text: '👨 Парни', callback_data: 'set_preferences_male' }
+            ]
         ]
     }
 };
