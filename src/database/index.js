@@ -394,7 +394,10 @@ const db = {
             FROM users u
             LEFT JOIN photos p ON u.user_id = p.user_id
             WHERE u.user_id != $1
-            AND u.gender = $2
+            AND (
+                $2 = 'any' 
+                OR u.gender = $2
+            )
             AND (
                 -- Показываем профиль если:
                 (

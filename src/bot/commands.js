@@ -684,13 +684,25 @@ exports.registerBotActions = (bot) => {
         }
     });
 
-    bot.action(/^set_preferences_(male|female)$/, async (ctx) => {
+    bot.action(/^set_preferences_(male|female|any)$/, async (ctx) => {
         try {
             const preference = ctx.match[1];
             await db.updateUserProfile(ctx.from.id, { preferences: preference });
             
-            const preferenceText = preference === 'female' ? 'девушек' : 'парней';
-            await ctx.reply(`✅ Теперь вы будете видеть анкеты ${preferenceText}`);
+            let preferenceText;
+            switch (preference) {
+                case 'female':
+                    preferenceText = 'девушек';
+                    break;
+                case 'male':
+                    preferenceText = 'парней';
+                    break;
+                case 'any':
+                    preferenceText = 'все анкеты';
+                    break;
+            }
+            
+            await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`);
             
             // Показываем следующую анкету с учетом новых предпочтений
             const nextProfile = await db.getNextProfile(ctx.from.id);

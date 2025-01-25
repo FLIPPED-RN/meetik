@@ -51,7 +51,8 @@ exports.editPreferencesKeyboard = {
             [
                 { text: '👩 Девушки', callback_data: 'set_preferences_female' },
                 { text: '👨 Парни', callback_data: 'set_preferences_male' }
-            ]
+            ],
+            [{ text: '🤝 Все анкеты', callback_data: 'set_preferences_any' }]
         ]
     }
 };
