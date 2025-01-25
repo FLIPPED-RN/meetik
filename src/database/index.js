@@ -805,22 +805,26 @@ const db = {
         try {
             await client.query('BEGIN');
 
-            // Получаем всех участников глобального рейтинга с их оценками
+            // Исправляем SQL запрос
             const participants = await client.query(`
                 WITH participant_stats AS (
                     SELECT 
                         u.user_id,
                         u.name,
-                        COUNT(gv.rating) as total_votes,
-                        COALESCE(AVG(gv.rating), 0) as avg_rating
+                        COUNT(gv.rating)::integer as total_votes,
+                        COALESCE(AVG(gv.rating)::numeric(10,2), 0) as avg_rating
                     FROM users u
-                    LEFT JOIN global_votes gv ON gv.candidate_id = u.user_id
+                    INNER JOIN global_votes gv ON gv.candidate_id = u.user_id
                     WHERE u.in_global_rating = true
                     GROUP BY u.user_id, u.name
+                    HAVING COUNT(gv.rating) >= 3
                 )
                 SELECT 
-                    *,
-                    RANK() OVER (ORDER BY avg_rating DESC, total_votes DESC) as place
+                    user_id,
+                    name,
+                    total_votes,
+                    avg_rating,
+                    RANK() OVER (ORDER BY avg_rating DESC, total_votes DESC)::integer as place
                 FROM participant_stats
             `);
 
@@ -844,15 +848,12 @@ const db = {
                 // Обновляем монеты и статус участия
                 await client.query(`
                     UPDATE users 
-                    SET coins = CASE 
-                        WHEN user_id = $1 THEN coins + $2
-                        ELSE coins
-                    END,
-                    last_global_win = CASE 
-                        WHEN user_id = $1 AND $2 > 0 THEN NOW()
-                        ELSE last_global_win
-                    END,
-                    in_global_rating = false
+                    SET coins = coins + $2,
+                        last_global_win = CASE 
+                            WHEN $2 > 0 THEN NOW()
+                            ELSE last_global_win
+                        END,
+                        in_global_rating = false
                     WHERE user_id = $1
                 `, [participant.user_id, coins]);
 
