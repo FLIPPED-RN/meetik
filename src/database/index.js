@@ -393,18 +393,24 @@ const db = {
             const userPreferences = user.rows[0]?.preferences;
             const userAge = user.rows[0]?.age;
             
-            const genderCondition = userPreferences === 'any' 
-                ? 'TRUE' 
-                : 'u.gender = $3';
-
-            const result = await client.query(`
+            let query = `
                 SELECT u.*, array_agg(p.photo_id) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
-                AND ${genderCondition}
                 AND u.in_global_rating = false
                 AND u.age BETWEEN $2 - 2 AND $2 + 2
+            `;
+
+            const params = [userId, userAge];
+
+            // Добавляем условие для пола только если не выбрано "any"
+            if (userPreferences !== 'any') {
+                query += ` AND u.gender = $3`;
+                params.push(userPreferences);
+            }
+
+            query += `
                 AND NOT EXISTS (
                     SELECT 1 
                     FROM ratings r 
@@ -415,10 +421,14 @@ const db = {
                 GROUP BY u.user_id
                 ORDER BY RANDOM()
                 LIMIT 1
-            `, userPreferences === 'any' 
-                ? [userId, userAge] 
-                : [userId, userAge, userPreferences]);
+            `;
 
+            // Добавим логирование для отладки
+            console.log('Preferences:', userPreferences);
+            console.log('Query:', query);
+            console.log('Params:', params);
+
+            const result = await client.query(query, params);
             return result.rows;
         } finally {
             client.release();
@@ -433,18 +443,24 @@ const db = {
             const userPreferences = user.rows[0]?.preferences;
             const userAge = user.rows[0]?.age;
             
-            const genderCondition = userPreferences === 'any' 
-                ? 'TRUE' 
-                : 'u.gender = $3';
-
-            const result = await client.query(`
+            let query = `
                 SELECT u.*, array_agg(p.photo_id) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
-                AND ${genderCondition}
                 AND u.in_global_rating = false
                 AND u.age BETWEEN $2 - 2 AND $2 + 2
+            `;
+
+            const params = [userId, userAge];
+
+            // Добавляем условие для пола только если не выбрано "any"
+            if (userPreferences !== 'any') {
+                query += ` AND u.gender = $3`;
+                params.push(userPreferences);
+            }
+
+            query += `
                 AND NOT EXISTS (
                     SELECT 1 
                     FROM ratings r 
@@ -455,10 +471,9 @@ const db = {
                 GROUP BY u.user_id
                 ORDER BY RANDOM()
                 LIMIT 1
-            `, userPreferences === 'any' 
-                ? [userId, userAge] 
-                : [userId, userAge, userPreferences]);
+            `;
 
+            const result = await client.query(query, params);
             return result.rows[0];
         } finally {
             client.release();
