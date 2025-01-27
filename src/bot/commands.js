@@ -5,6 +5,11 @@ const db = require('../database');
 const commands = require('./index');
 
 async function sendProfileForRating(ctx, profile) {
+    if (!profile) {
+        await ctx.reply('Нет доступных анкет для оценки.');
+        return;
+    }
+
     try {
         const photos = await db.getUserPhotos(profile.user_id);
         const isGlobalParticipant = profile.in_global_rating;
@@ -90,32 +95,25 @@ ${user.description ? `\n📄 О себе: ${user.description}` : ''}`;
 
 exports.startRatingCommand = async (ctx) => {
     try {
-        // Сначала проверяем, есть ли активный глобальный раунд
-        const currentRound = await db.getCurrentGlobalRound();
-        let profiles;
-
-        if (currentRound && !currentRound.is_final_voting) {
-            // Если есть активный раунд, получаем анкеты глобального рейтинга
-            profiles = await db.getGlobalRatingParticipants(ctx.from.id);
-            
-            if (profiles && profiles.length > 0) {
-                await ctx.reply('🌍 Сейчас идет глобальный раунд! Оцените участников:');
-                await sendProfileForRating(ctx, profiles[0]);
-                return;
-            }
-        }
-
-        // Если нет глобальных анкет, показываем обычные
-        profiles = await db.getProfilesForRating(ctx.from.id);
+        const result = await db.getProfilesForRating(ctx.from.id);
         
-        if (!profiles || profiles.length === 0) {
-            return ctx.reply('Сейчас нет доступных анкет для оценки. Попробуйте позже.');
+        // Если есть сообщение о недоступности анкет
+        if (result.message) {
+            await ctx.reply(result.message);
+            return;
         }
 
-        await sendProfileForRating(ctx, profiles[0]);
+        // Если нет доступных анкет
+        if (!result.rows || result.rows.length === 0) {
+            await ctx.reply('Нет доступных анкет для оценки.');
+            return;
+        }
+
+        // Отправляем первую доступную анкету
+        await sendProfileForRating(ctx, result.rows[0]);
     } catch (error) {
-        console.error('Ошибка при получении анкет:', error);
-        await ctx.reply('Произошла ошибка при загрузке анкет.');
+        console.error('Ошибка при начале оценивания:', error);
+        await ctx.reply('Произошла ошибка при поиске анкет.');
     }
 };
 

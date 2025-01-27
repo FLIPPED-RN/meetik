@@ -416,32 +416,30 @@ const db = {
                 console.log('All available profiles have been rated in the last hour');
                 return { 
                     rows: [],
-                    message: 'Вы уже оценили все доступные анкеты. Попробуйте через час, когда они снова станут доступны.'
+                    message: 'Вы просмотрели все доступные анкеты. Новые анкеты станут доступны через час.'
                 };
             }
 
-            // Остальной код остается тем же...
             const user = await client.query(`
                 SELECT preferences, age 
                 FROM users 
                 WHERE user_id = $1`, [userId]);
             
             if (!user.rows[0]) {
-                console.error(`User ${userId} not found`);
-                return { rows: [], message: 'Профиль не найден' };
+                return { 
+                    rows: [], 
+                    message: 'Профиль не найден' 
+                };
             }
 
             const userPreferences = user.rows[0].preferences;
             const userAge = user.rows[0].age;
 
-            console.log('Fresh user data:', {
-                preferences: userPreferences,
-                age: userAge
-            });
-
             if (!userAge) {
-                console.error(`Age not set for user ${userId}`);
-                return { rows: [], message: 'Возраст не указан' };
+                return { 
+                    rows: [], 
+                    message: 'Возраст не указан в профиле' 
+                };
             }
             
             let query = `
@@ -479,9 +477,13 @@ const db = {
                 rows: result.rows,
                 message: result.rows.length === 0 ? 'Нет доступных анкет для оценки' : null
             };
+
         } catch (error) {
             console.error('Error in getProfilesForRating:', error);
-            return { rows: [], message: 'Произошла ошибка при поиске анкет' };
+            return { 
+                rows: [], 
+                message: 'Произошла ошибка при поиске анкет' 
+            };
         } finally {
             client.release();
         }
