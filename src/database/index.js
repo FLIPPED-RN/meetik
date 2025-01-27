@@ -388,24 +388,46 @@ const db = {
     getProfilesForRating: async (userId) => {
         const client = await pool.connect();
         try {
-            // Получаем предпочтения и возраст пользователя
-            const user = await client.query('SELECT preferences, age FROM users WHERE user_id = $1', [userId]);
-            const userPreferences = user.rows[0]?.preferences;
-            const userAge = user.rows[0]?.age;
+            // Принудительно получаем свежие данные пользователя
+            const user = await client.query(`
+                SELECT preferences, age 
+                FROM users 
+                WHERE user_id = $1 
+                FOR UPDATE`, [userId]);
+            
+            if (!user.rows[0]) {
+                console.error(`User ${userId} not found`);
+                return [];
+            }
+
+            const userPreferences = user.rows[0].preferences;
+            const userAge = user.rows[0].age;
+
+            // Добавляем логирование для отладки
+            console.log('Fresh user data:', {
+                preferences: userPreferences,
+                age: userAge
+            });
+
+            if (!userAge) {
+                console.error(`Age not set for user ${userId}`);
+                return [];
+            }
             
             let query = `
-                SELECT u.*, array_agg(p.photo_id) as photos
+                SELECT 
+                    u.*,
+                    array_agg(p.photo_id) FILTER (WHERE p.photo_id IS NOT NULL) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
                 AND u.in_global_rating = false
-                AND u.age BETWEEN $2 - 2 AND $2 + 2
-            `;
+                AND u.age BETWEEN $2 - 2 AND $2 + 2`;
 
             const params = [userId, userAge];
 
-            // Добавляем условие для пола только если не выбрано "any"
-            if (userPreferences !== 'any') {
+            // Проверяем и добавляем условие для пола
+            if (userPreferences && userPreferences !== 'any') {
                 query += ` AND u.gender = $3`;
                 params.push(userPreferences);
             }
@@ -420,16 +442,29 @@ const db = {
                 )
                 GROUP BY u.user_id
                 ORDER BY RANDOM()
-                LIMIT 1
-            `;
+                LIMIT 1`;
 
-            // Добавим логирование для отладки
-            console.log('Preferences:', userPreferences);
-            console.log('Query:', query);
-            console.log('Params:', params);
+            // Добавляем подробное логирование
+            console.log('Query execution details:', {
+                userId,
+                userPreferences,
+                userAge,
+                query: query.replace(/\s+/g, ' ').trim(),
+                params
+            });
 
             const result = await client.query(query, params);
+            
+            // Логируем результат
+            console.log('Query result:', {
+                found: result.rows.length > 0,
+                profileId: result.rows[0]?.user_id
+            });
+
             return result.rows;
+        } catch (error) {
+            console.error('Error in getProfilesForRating:', error);
+            return [];
         } finally {
             client.release();
         }
@@ -438,24 +473,38 @@ const db = {
     getNextProfile: async (userId) => {
         const client = await pool.connect();
         try {
-            // Получаем предпочтения и возраст пользователя
-            const user = await client.query('SELECT preferences, age FROM users WHERE user_id = $1', [userId]);
-            const userPreferences = user.rows[0]?.preferences;
-            const userAge = user.rows[0]?.age;
+            const user = await client.query(`
+                SELECT preferences, age 
+                FROM users 
+                WHERE user_id = $1 
+                FOR UPDATE`, [userId]);
+            
+            if (!user.rows[0]) {
+                console.error(`User ${userId} not found`);
+                return null;
+            }
+
+            const userPreferences = user.rows[0].preferences;
+            const userAge = user.rows[0].age;
+
+            if (!userAge) {
+                console.error(`Age not set for user ${userId}`);
+                return null;
+            }
             
             let query = `
-                SELECT u.*, array_agg(p.photo_id) as photos
+                SELECT 
+                    u.*,
+                    array_agg(p.photo_id) FILTER (WHERE p.photo_id IS NOT NULL) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
                 AND u.in_global_rating = false
-                AND u.age BETWEEN $2 - 2 AND $2 + 2
-            `;
+                AND u.age BETWEEN $2 - 2 AND $2 + 2`;
 
             const params = [userId, userAge];
 
-            // Добавляем условие для пола только если не выбрано "any"
-            if (userPreferences !== 'any') {
+            if (userPreferences && userPreferences !== 'any') {
                 query += ` AND u.gender = $3`;
                 params.push(userPreferences);
             }
@@ -470,11 +519,13 @@ const db = {
                 )
                 GROUP BY u.user_id
                 ORDER BY RANDOM()
-                LIMIT 1
-            `;
+                LIMIT 1`;
 
             const result = await client.query(query, params);
-            return result.rows[0];
+            return result.rows[0] || null;
+        } catch (error) {
+            console.error('Error in getNextProfile:', error);
+            return null;
         } finally {
             client.release();
         }
