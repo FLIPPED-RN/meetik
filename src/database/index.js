@@ -386,61 +386,70 @@ const db = {
     },
 
     getNextProfile: async (userId) => {
-        const user = await pool.query('SELECT preferences FROM users WHERE user_id = $1', [userId]);
-        const userPreferences = user.rows[0]?.preferences;
+        const client = await pool.connect();
+        try {
+            // Получаем информацию о пользователе
+            const userResult = await client.query(
+                'SELECT preferences, gender FROM users WHERE user_id = $1',
+                [userId]
+            );
+            const user = userResult.rows[0];
+            if (!user) return null;
 
-        const result = await pool.query(`
-            SELECT u.*, array_agg(p.photo_id) as photos
-            FROM users u
-            LEFT JOIN photos p ON u.user_id = p.user_id
-            WHERE u.user_id != $1
-            AND (
-                $2 = 'any' 
-                OR u.gender = $2
-            )
-            AND (
-                -- Показываем профиль если:
-                (
-                    -- Это обычная оценка (не участник глобальной оценки)
-                    u.in_global_rating = false
-                    AND (
-                        u.last_win_time IS NULL 
-                        OR u.last_win_time < NOW() - INTERVAL '1 hour'
+            // Формируем условие для фильтрации по полу
+            let genderCondition = 'TRUE';
+            if (user.preferences !== 'any') {
+                genderCondition = 'u.gender = $2';
+            }
+
+            const result = await client.query(`
+                SELECT u.*, array_agg(p.photo_id) as photos
+                FROM users u
+                LEFT JOIN photos p ON u.user_id = p.user_id
+                WHERE u.user_id != $1
+                AND ${genderCondition}
+                AND (
+                    -- Показываем профиль если:
+                    (
+                        -- Это обычная оценка (не участник глобальной оценки)
+                        u.in_global_rating = false
+                        AND NOT EXISTS (
+                            SELECT 1 FROM ratings r
+                            WHERE r.from_user_id = $1 
+                            AND r.to_user_id = u.user_id
+                            AND r.created_at > NOW() - INTERVAL '1 hour'
+                        )
                     )
-                    AND NOT EXISTS (
-                        SELECT 1 FROM ratings r
-                        WHERE r.from_user_id = $1 
-                        AND r.to_user_id = u.user_id
-                        AND (r.created_at > NOW() - INTERVAL '1 hour' OR r.is_skip = true)
-                    )
-                )
-                OR
-                -- ИЛИ это участник глобальной оценки
-                (
-                    u.in_global_rating = true
-                    AND EXISTS (
-                        SELECT 1 FROM global_rounds gr
-                        WHERE gr.is_active = true
-                        AND NOT gr.is_final_voting
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1 FROM global_ratings gr
-                        WHERE gr.from_user_id = $1 
-                        AND gr.to_user_id = u.user_id
-                        AND gr.round_id = (
-                            SELECT id FROM global_rounds 
-                            WHERE is_active = true
-                            LIMIT 1
+                    OR
+                    -- ИЛИ это участник глобальной оценки
+                    (
+                        u.in_global_rating = true
+                        AND EXISTS (
+                            SELECT 1 FROM global_rounds gr
+                            WHERE gr.is_active = true
+                            AND NOT gr.is_final_voting
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM global_votes gv
+                            WHERE gv.voter_id = $1 
+                            AND gv.candidate_id = u.user_id
+                            AND gv.round_id = (
+                                SELECT id FROM global_rounds 
+                                WHERE is_active = true
+                                LIMIT 1
+                            )
                         )
                     )
                 )
-            )
-            GROUP BY u.user_id
-            ORDER BY u.in_global_rating DESC, RANDOM()
-            LIMIT 1
-        `, [userId, userPreferences]);
+                GROUP BY u.user_id
+                ORDER BY u.in_global_rating DESC, RANDOM()
+                LIMIT 1
+            `, user.preferences === 'any' ? [userId] : [userId, user.preferences]);
 
-        return result.rows[0];
+            return result.rows[0];
+        } finally {
+            client.release();
+        }
     },
 
     getCurrentRoundWinners: async () => {
@@ -463,16 +472,25 @@ const db = {
     },
 
     getLastRatings: async (userId) => {
-        const result = await pool.query(`
-            SELECT r.*, u.username 
-            FROM ratings r
-            LEFT JOIN users u ON r.from_user_id = u.user_id
-            WHERE r.to_user_id = $1
-            AND r.is_skip = false
-            ORDER BY r.created_at DESC
-            LIMIT 5
-        `, [userId]);
-        return result.rows;
+        const client = await pool.connect();
+        try {
+            const result = await client.query(`
+                SELECT DISTINCT ON (r.from_user_id)
+                    r.*, u.name, u.age, u.city, u.user_id, u.username,
+                    array_agg(p.photo_id) as photos
+                FROM ratings r
+                JOIN users u ON r.from_user_id = u.user_id
+                LEFT JOIN photos p ON u.user_id = p.user_id
+                WHERE r.to_user_id = $1
+                AND r.created_at > NOW() - INTERVAL '24 hours'
+                GROUP BY r.id, u.user_id, r.created_at
+                ORDER BY r.from_user_id, r.created_at DESC
+            `, [userId]);
+
+            return result.rows;
+        } finally {
+            client.release();
+        }
     },
 
     updateWinners: async () => {
