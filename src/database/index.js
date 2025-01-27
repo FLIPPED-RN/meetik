@@ -388,12 +388,50 @@ const db = {
     getProfilesForRating: async (userId) => {
         const client = await pool.connect();
         try {
-            // Принудительно получаем свежие данные пользователя
+            // Сначала проверим, есть ли вообще другие пользователи в нужном возрастном диапазоне
+            const checkUsers = await client.query(`
+                SELECT COUNT(*) as count
+                FROM users
+                WHERE user_id != $1
+                AND age BETWEEN $2 - 2 AND $2 + 2
+            `, [userId, 18]);
+            
+            console.log('Users in age range:', checkUsers.rows[0].count);
+
+            // Проверим, сколько из них не в глобальном рейтинге
+            const checkNonGlobal = await client.query(`
+                SELECT COUNT(*) as count
+                FROM users
+                WHERE user_id != $1
+                AND age BETWEEN $2 - 2 AND $2 + 2
+                AND in_global_rating = false
+            `, [userId, 18]);
+            
+            console.log('Users not in global rating:', checkNonGlobal.rows[0].count);
+
+            // Проверим, сколько из них не оценивались в последний час
+            const checkNotRated = await client.query(`
+                SELECT COUNT(*) as count
+                FROM users u
+                WHERE u.user_id != $1
+                AND u.age BETWEEN $2 - 2 AND $2 + 2
+                AND u.in_global_rating = false
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM ratings r 
+                    WHERE r.to_user_id = u.user_id 
+                    AND r.from_user_id = $1
+                    AND r.created_at > NOW() - INTERVAL '1 hour'
+                )
+            `, [userId, 18]);
+            
+            console.log('Users not rated in last hour:', checkNotRated.rows[0].count);
+
+            // Основной запрос остается тем же
             const user = await client.query(`
                 SELECT preferences, age 
                 FROM users 
-                WHERE user_id = $1 
-                FOR UPDATE`, [userId]);
+                WHERE user_id = $1`, [userId]);
             
             if (!user.rows[0]) {
                 console.error(`User ${userId} not found`);
@@ -403,7 +441,6 @@ const db = {
             const userPreferences = user.rows[0].preferences;
             const userAge = user.rows[0].age;
 
-            // Добавляем логирование для отладки
             console.log('Fresh user data:', {
                 preferences: userPreferences,
                 age: userAge
@@ -426,7 +463,6 @@ const db = {
 
             const params = [userId, userAge];
 
-            // Проверяем и добавляем условие для пола
             if (userPreferences && userPreferences !== 'any') {
                 query += ` AND u.gender = $3`;
                 params.push(userPreferences);
@@ -444,18 +480,8 @@ const db = {
                 ORDER BY RANDOM()
                 LIMIT 1`;
 
-            // Добавляем подробное логирование
-            console.log('Query execution details:', {
-                userId,
-                userPreferences,
-                userAge,
-                query: query.replace(/\s+/g, ' ').trim(),
-                params
-            });
-
             const result = await client.query(query, params);
             
-            // Логируем результат
             console.log('Query result:', {
                 found: result.rows.length > 0,
                 profileId: result.rows[0]?.user_id
