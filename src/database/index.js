@@ -385,22 +385,17 @@ const db = {
         };
     },
 
-    getNextProfile: async (userId) => {
+    getProfilesForRating: async (userId) => {
         const client = await pool.connect();
         try {
-            // Получаем информацию о пользователе
-            const userResult = await client.query(
-                'SELECT preferences, gender FROM users WHERE user_id = $1',
-                [userId]
-            );
-            const user = userResult.rows[0];
-            if (!user) return null;
-
-            // Формируем условие для фильтрации по полу
-            let genderCondition = 'TRUE';
-            if (user.preferences !== 'any') {
-                genderCondition = 'u.gender = $2';
-            }
+            // Получаем предпочтения и возраст пользователя
+            const user = await client.query('SELECT preferences, age FROM users WHERE user_id = $1', [userId]);
+            const userPreferences = user.rows[0]?.preferences;
+            const userAge = user.rows[0]?.age;
+            
+            const genderCondition = userPreferences === 'any' 
+                ? 'TRUE' 
+                : 'u.gender = $3';
 
             const result = await client.query(`
                 SELECT u.*, array_agg(p.photo_id) as photos
@@ -408,43 +403,61 @@ const db = {
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
                 AND ${genderCondition}
-                AND (
-                    -- Показываем профиль если:
-                    (
-                        -- Это обычная оценка (не участник глобальной оценки)
-                        u.in_global_rating = false
-                        AND NOT EXISTS (
-                            SELECT 1 FROM ratings r
-                            WHERE r.from_user_id = $1 
-                            AND r.to_user_id = u.user_id
-                            AND r.created_at > NOW() - INTERVAL '1 hour'
-                        )
-                    )
-                    OR
-                    -- ИЛИ это участник глобальной оценки
-                    (
-                        u.in_global_rating = true
-                        AND EXISTS (
-                            SELECT 1 FROM global_rounds gr
-                            WHERE gr.is_active = true
-                            AND NOT gr.is_final_voting
-                        )
-                        AND NOT EXISTS (
-                            SELECT 1 FROM global_votes gv
-                            WHERE gv.voter_id = $1 
-                            AND gv.candidate_id = u.user_id
-                            AND gv.round_id = (
-                                SELECT id FROM global_rounds 
-                                WHERE is_active = true
-                                LIMIT 1
-                            )
-                        )
-                    )
+                AND u.in_global_rating = false
+                AND u.age BETWEEN $2 - 2 AND $2 + 2
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM ratings r 
+                    WHERE r.to_user_id = u.user_id 
+                    AND r.from_user_id = $1
+                    AND r.created_at > NOW() - INTERVAL '1 hour'
                 )
                 GROUP BY u.user_id
-                ORDER BY u.in_global_rating DESC, RANDOM()
+                ORDER BY RANDOM()
                 LIMIT 1
-            `, user.preferences === 'any' ? [userId] : [userId, user.preferences]);
+            `, userPreferences === 'any' 
+                ? [userId, userAge] 
+                : [userId, userAge, userPreferences]);
+
+            return result.rows;
+        } finally {
+            client.release();
+        }
+    },
+
+    getNextProfile: async (userId) => {
+        const client = await pool.connect();
+        try {
+            // Получаем предпочтения и возраст пользователя
+            const user = await client.query('SELECT preferences, age FROM users WHERE user_id = $1', [userId]);
+            const userPreferences = user.rows[0]?.preferences;
+            const userAge = user.rows[0]?.age;
+            
+            const genderCondition = userPreferences === 'any' 
+                ? 'TRUE' 
+                : 'u.gender = $3';
+
+            const result = await client.query(`
+                SELECT u.*, array_agg(p.photo_id) as photos
+                FROM users u
+                LEFT JOIN photos p ON u.user_id = p.user_id
+                WHERE u.user_id != $1
+                AND ${genderCondition}
+                AND u.in_global_rating = false
+                AND u.age BETWEEN $2 - 2 AND $2 + 2
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM ratings r 
+                    WHERE r.to_user_id = u.user_id 
+                    AND r.from_user_id = $1
+                    AND r.created_at > NOW() - INTERVAL '1 hour'
+                )
+                GROUP BY u.user_id
+                ORDER BY RANDOM()
+                LIMIT 1
+            `, userPreferences === 'any' 
+                ? [userId, userAge] 
+                : [userId, userAge, userPreferences]);
 
             return result.rows[0];
         } finally {
@@ -550,31 +563,6 @@ const db = {
         } finally {
             client.release();
         }
-    },
-
-    getProfilesForRating: async (userId) => {
-        const user = await pool.query('SELECT preferences FROM users WHERE user_id = $1', [userId]);
-        const userPreferences = user.rows[0]?.preferences;
-
-        const result = await pool.query(`
-            SELECT u.*, array_agg(p.photo_id) as photos
-            FROM users u
-            LEFT JOIN photos p ON u.user_id = p.user_id
-            WHERE u.user_id != $1
-            AND u.gender = $2
-            AND u.in_global_rating = false
-            AND NOT EXISTS (
-                SELECT 1 
-                FROM ratings r 
-                WHERE r.to_user_id = u.user_id 
-                AND r.from_user_id = $1
-                AND r.created_at > NOW() - INTERVAL '1 hour'
-            )
-            GROUP BY u.user_id
-            ORDER BY RANDOM()
-            LIMIT 10
-        `, [userId, userPreferences]);
-        return result.rows;
     },
 
     joinGlobalRating: async (userId) => {
