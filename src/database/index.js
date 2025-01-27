@@ -388,46 +388,39 @@ const db = {
     getProfilesForRating: async (userId) => {
         const client = await pool.connect();
         try {
-            // Сначала проверим, есть ли вообще другие пользователи в нужном возрастном диапазоне
-            const checkUsers = await client.query(`
-                SELECT COUNT(*) as count
-                FROM users
-                WHERE user_id != $1
-                AND age BETWEEN $2 - 2 AND $2 + 2
-            `, [userId, 18]);
-            
-            console.log('Users in age range:', checkUsers.rows[0].count);
-
-            // Проверим, сколько из них не в глобальном рейтинге
-            const checkNonGlobal = await client.query(`
-                SELECT COUNT(*) as count
-                FROM users
-                WHERE user_id != $1
-                AND age BETWEEN $2 - 2 AND $2 + 2
-                AND in_global_rating = false
-            `, [userId, 18]);
-            
-            console.log('Users not in global rating:', checkNonGlobal.rows[0].count);
-
-            // Проверим, сколько из них не оценивались в последний час
-            const checkNotRated = await client.query(`
+            // Проверяем, сколько анкет доступно без учета часового ограничения
+            const totalAvailable = await client.query(`
                 SELECT COUNT(*) as count
                 FROM users u
                 WHERE u.user_id != $1
-                AND u.age BETWEEN $2 - 2 AND $2 + 2
                 AND u.in_global_rating = false
-                AND NOT EXISTS (
-                    SELECT 1 
-                    FROM ratings r 
-                    WHERE r.to_user_id = u.user_id 
-                    AND r.from_user_id = $1
-                    AND r.created_at > NOW() - INTERVAL '1 hour'
-                )
+                AND u.age BETWEEN $2 - 2 AND $2 + 2
             `, [userId, 18]);
-            
-            console.log('Users not rated in last hour:', checkNotRated.rows[0].count);
 
-            // Основной запрос остается тем же
+            // Проверяем, сколько анкет оценено за последний час
+            const ratedLastHour = await client.query(`
+                SELECT COUNT(DISTINCT r.to_user_id) as count
+                FROM ratings r
+                WHERE r.from_user_id = $1
+                AND r.created_at > NOW() - INTERVAL '1 hour'
+            `, [userId]);
+
+            console.log('Statistics:', {
+                totalProfiles: totalAvailable.rows[0].count,
+                ratedInLastHour: ratedLastHour.rows[0].count
+            });
+
+            // Если все доступные анкеты оценены
+            if (totalAvailable.rows[0].count > 0 && 
+                totalAvailable.rows[0].count <= ratedLastHour.rows[0].count) {
+                console.log('All available profiles have been rated in the last hour');
+                return { 
+                    rows: [],
+                    message: 'Вы уже оценили все доступные анкеты. Попробуйте через час, когда они снова станут доступны.'
+                };
+            }
+
+            // Остальной код остается тем же...
             const user = await client.query(`
                 SELECT preferences, age 
                 FROM users 
@@ -435,7 +428,7 @@ const db = {
             
             if (!user.rows[0]) {
                 console.error(`User ${userId} not found`);
-                return [];
+                return { rows: [], message: 'Профиль не найден' };
             }
 
             const userPreferences = user.rows[0].preferences;
@@ -448,7 +441,7 @@ const db = {
 
             if (!userAge) {
                 console.error(`Age not set for user ${userId}`);
-                return [];
+                return { rows: [], message: 'Возраст не указан' };
             }
             
             let query = `
@@ -482,15 +475,13 @@ const db = {
 
             const result = await client.query(query, params);
             
-            console.log('Query result:', {
-                found: result.rows.length > 0,
-                profileId: result.rows[0]?.user_id
-            });
-
-            return result.rows;
+            return {
+                rows: result.rows,
+                message: result.rows.length === 0 ? 'Нет доступных анкет для оценки' : null
+            };
         } catch (error) {
             console.error('Error in getProfilesForRating:', error);
-            return [];
+            return { rows: [], message: 'Произошла ошибка при поиске анкет' };
         } finally {
             client.release();
         }
