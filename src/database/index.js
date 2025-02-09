@@ -412,30 +412,27 @@ const db = {
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
-                AND u.in_global_rating = false
-                AND u.age BETWEEN $2 - 2 AND $2 + 2`;
-
-            const params = [userId, userAge];
-
-            // Добавляем фильтр по полу в соответствии с предпочтениями
-            if (userPreferences && userPreferences !== 'any') {
-                query += ` AND u.gender = $3`;
-                params.push(userPreferences);
-            }
-
-            query += `
                 AND NOT EXISTS (
                     SELECT 1 
                     FROM ratings r 
                     WHERE r.to_user_id = u.user_id 
                     AND r.from_user_id = $1
                     AND r.created_at > NOW() - INTERVAL '1 hour'
-                )
+                )`;
+
+            // Добавляем фильтр по полу в зависимости от предпочтений
+            if (userPreferences === 'male') {
+                query += ` AND u.gender = 'male'`;
+            } else if (userPreferences === 'female') {
+                query += ` AND u.gender = 'female'`;
+            }
+
+            query += `
                 GROUP BY u.user_id
                 ORDER BY RANDOM()
                 LIMIT 1`;
 
-            const result = await client.query(query, params);
+            const result = await client.query(query, [userId]);
             
             return {
                 rows: result.rows,
@@ -465,31 +462,21 @@ const db = {
                     array_agg(p.photo_id) FILTER (WHERE p.photo_id IS NOT NULL) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
-                WHERE u.user_id != $1
-                AND u.in_global_rating = false
-                AND u.age BETWEEN $2 - 2 AND $2 + 2`;
+                WHERE u.user_id != $1`;
 
-            const params = [userId, userAge];
-
-            // Добавляем фильтр по полу в соответствии с предпочтениями
-            if (userPreferences && userPreferences !== 'any') {
-                query += ` AND u.gender = $3`;
-                params.push(userPreferences);
+            // Добавляем фильтр по полу в зависимости от предпочтений
+            if (userPreferences === 'male') {
+                query += ` AND u.gender = 'male'`;
+            } else if (userPreferences === 'female') {
+                query += ` AND u.gender = 'female'`;
             }
 
             query += `
-                AND NOT EXISTS (
-                    SELECT 1 
-                    FROM ratings r 
-                    WHERE r.to_user_id = u.user_id 
-                    AND r.from_user_id = $1
-                    AND r.created_at > NOW() - INTERVAL '1 hour'
-                )
                 GROUP BY u.user_id
                 ORDER BY RANDOM()
                 LIMIT 1`;
 
-            const result = await client.query(query, params);
+            const result = await client.query(query, [userId]);
             return result.rows[0] || null;
         } finally {
             client.release();
