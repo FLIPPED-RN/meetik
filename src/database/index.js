@@ -233,12 +233,13 @@ const db = {
     },
 
     getNextProfile: async (userId) => {
-        const user = await db.getUserProfile(userId);
+        const user = await pool.query(`SELECT preferences FROM users WHERE user_id = $1`, [userId]);
+        if (!user.rows[0]) return null;
         
         let genderCondition = '';
-        if (user.preferences === 'male') {
+        if (user.rows[0].preferences === 'male') {
             genderCondition = 'AND u.gender = \'male\'';
-        } else if (user.preferences === 'female') {
+        } else if (user.rows[0].preferences === 'female') {
             genderCondition = 'AND u.gender = \'female\'';
         }
 
@@ -247,12 +248,12 @@ const db = {
             FROM users u
             LEFT JOIN photos p ON u.user_id = p.user_id
             WHERE u.user_id != $1
+            ${genderCondition}
             AND (
                 -- Показываем профиль если:
                 (
                     -- Это обычная оценка (не участник глобальной оценки)
                     u.in_global_rating = false
-                    ${genderCondition}
                     AND (
                         u.last_win_time IS NULL 
                         OR u.last_win_time < NOW() - INTERVAL '1 hour'
@@ -262,6 +263,21 @@ const db = {
                         WHERE r.from_user_id = $1 
                         AND r.to_user_id = u.user_id
                         AND (r.created_at > NOW() - INTERVAL '1 hour' OR r.is_skip = true)
+                    )
+                )
+                OR
+                -- ИЛИ это участник глобальной оценки
+                (
+                    u.in_global_rating = true
+                    AND NOT EXISTS (
+                        SELECT 1 FROM global_ratings gr
+                        WHERE gr.from_user_id = $1 
+                        AND gr.to_user_id = u.user_id
+                        AND gr.round_id = (
+                            SELECT id FROM global_rounds 
+                            WHERE is_active = true
+                            LIMIT 1
+                        )
                     )
                 )
             )
