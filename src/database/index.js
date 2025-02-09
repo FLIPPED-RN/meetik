@@ -233,6 +233,15 @@ const db = {
     },
 
     getNextProfile: async (userId) => {
+        const user = await db.getUserProfile(userId);
+        
+        let genderCondition = '';
+        if (user.preferences === 'male') {
+            genderCondition = 'AND u.gender = \'male\'';
+        } else if (user.preferences === 'female') {
+            genderCondition = 'AND u.gender = \'female\'';
+        }
+
         const result = await pool.query(`
             SELECT u.*, array_agg(p.photo_id) as photos
             FROM users u
@@ -243,6 +252,7 @@ const db = {
                 (
                     -- Это обычная оценка (не участник глобальной оценки)
                     u.in_global_rating = false
+                    ${genderCondition}
                     AND (
                         u.last_win_time IS NULL 
                         OR u.last_win_time < NOW() - INTERVAL '1 hour'
@@ -252,21 +262,6 @@ const db = {
                         WHERE r.from_user_id = $1 
                         AND r.to_user_id = u.user_id
                         AND (r.created_at > NOW() - INTERVAL '1 hour' OR r.is_skip = true)
-                    )
-                )
-                OR
-                -- ИЛИ это участник глобальной оценки
-                (
-                    u.in_global_rating = true
-                    AND NOT EXISTS (
-                        SELECT 1 FROM global_ratings gr
-                        WHERE gr.from_user_id = $1 
-                        AND gr.to_user_id = u.user_id
-                        AND gr.round_id = (
-                            SELECT id FROM global_rounds 
-                            WHERE is_active = true
-                            LIMIT 1
-                        )
                     )
                 )
             )
@@ -375,12 +370,20 @@ const db = {
             const minAge = user.age - 2;
             const maxAge = user.age + 2;
 
+            let genderCondition = '';
+            if (user.preferences === 'male') {
+                genderCondition = 'AND u.gender = \'male\'';
+            } else if (user.preferences === 'female') {
+                genderCondition = 'AND u.gender = \'female\'';
+            }
+
             const result = await pool.query(`
                 SELECT u.* FROM users u
                 LEFT JOIN ratings r ON u.user_id = r.to_user_id AND r.from_user_id = $1
                 WHERE u.user_id != $1 
                 AND u.age BETWEEN $2 AND $3  
                 AND u.in_global_rating = false  
+                ${genderCondition}
                 AND (r.rating IS NULL OR r.created_at < NOW() - INTERVAL '24 hours')
                 ORDER BY RANDOM()
                 LIMIT 10

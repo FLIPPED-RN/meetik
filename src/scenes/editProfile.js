@@ -1,6 +1,6 @@
 const { Scenes } = require('telegraf');
 const validators = require('../utils/validators');
-const { mainMenu, editProfileKeyboard } = require('../utils/keyboards');
+const { mainMenu, editProfileKeyboard, preferencesKeyboard } = require('../utils/keyboards');
 const db = require('../database');
 
 const editProfileScene = new Scenes.WizardScene(
@@ -12,7 +12,20 @@ const editProfileScene = new Scenes.WizardScene(
             return ctx.scene.leave();
         }
 
-        await ctx.reply('Что вы хотите изменить?', editProfileKeyboard);
+        await ctx.reply('Что вы хотите изменить?', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Имя', callback_data: 'edit_name' }],
+                    [{ text: 'Возраст', callback_data: 'edit_age' }],
+                    [{ text: 'Город', callback_data: 'edit_city' }],
+                    [{ text: 'Пол', callback_data: 'edit_gender' }],
+                    [{ text: 'Предпочтения', callback_data: 'edit_preferences' }],
+                    [{ text: 'Описание', callback_data: 'edit_description' }],
+                    [{ text: 'Фотографии', callback_data: 'edit_photos' }],
+                    [{ text: 'Отмена', callback_data: 'cancel_edit' }]
+                ]
+            }
+        });
         return ctx.wizard.next();
     },
     async (ctx) => {
@@ -35,6 +48,20 @@ const editProfileScene = new Scenes.WizardScene(
                 break;
             case 'edit_city':
                 await ctx.reply('Введите новый город (2-50 символов):');
+                break;
+            case 'edit_gender':
+                await ctx.reply('Выберите пол:', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Мужской', callback_data: 'pref_male' }],
+                            [{ text: 'Женский', callback_data: 'pref_female' }],
+                            [{ text: 'Любой', callback_data: 'pref_any' }]
+                        ]
+                    }
+                });
+                break;
+            case 'edit_preferences':
+                await ctx.reply('Кого вы хотите найти?', preferencesKeyboard);
                 break;
             case 'edit_description':
                 await ctx.reply('Введите новое описание (до 500 символов) или нажмите кнопку "Пропустить"', {
@@ -81,6 +108,26 @@ const editProfileScene = new Scenes.WizardScene(
                         return;
                     }
                     await db.updateUserField(ctx.from.id, 'city', city);
+                    break;
+
+                case 'edit_gender':
+                    if (!ctx.callbackQuery || !['pref_male', 'pref_female', 'pref_any'].includes(ctx.callbackQuery.data)) {
+                        await ctx.reply('Пожалуйста, выберите пол, используя кнопки выше');
+                        return;
+                    }
+                    const gender = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
+                                   ctx.callbackQuery.data === 'pref_female' ? 'female' : 'any';
+                    await db.updateUserField(ctx.from.id, 'gender', gender);
+                    break;
+
+                case 'edit_preferences':
+                    if (!ctx.callbackQuery || !['pref_male', 'pref_female', 'pref_any'].includes(ctx.callbackQuery.data)) {
+                        await ctx.reply('Пожалуйста, выберите предпочтения, используя кнопки выше');
+                        return;
+                    }
+                    const preferences = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
+                                       ctx.callbackQuery.data === 'pref_female' ? 'female' : 'any';
+                    await db.updateUserField(ctx.from.id, 'preferences', preferences);
                     break;
 
                 case 'edit_description':
