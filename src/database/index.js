@@ -411,6 +411,9 @@ const db = {
             const userPreferences = userPrefs.rows[0].preferences;
             const userAge = userPrefs.rows[0].age;
 
+            // Добавим логирование для отладки
+            console.log('User preferences:', userPreferences);
+
             let query = `
                 WITH already_rated AS (
                     SELECT to_user_id 
@@ -419,7 +422,7 @@ const db = {
                 )
                 SELECT DISTINCT ON (u.user_id)
                     u.*,
-                    array_agg(p.photo_id) as photos
+                    array_agg(CASE WHEN p.photo_id IS NOT NULL THEN p.photo_id END) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
@@ -427,18 +430,20 @@ const db = {
                 AND u.age BETWEEN $2 AND $3
             `;
 
-            // Добавляем фильтр по полу в зависимости от предпочтений
+            const params = [userId, Math.max(14, userAge - 2), Math.min(99, userAge + 2)];
+
+            // Строгая проверка на соответствие пола
             if (userPreferences === 'male') {
                 query += ` AND u.gender = 'male'`;
             } else if (userPreferences === 'female') {
                 query += ` AND u.gender = 'female'`;
             }
 
-            // Если запрошены свежие анкеты, добавляем сортировку по времени создания
+            // Добавляем группировку и сортировку
             if (forceFresh) {
                 query += `
-                    GROUP BY u.user_id
-                    ORDER BY u.user_id, u.created_at DESC
+                    GROUP BY u.user_id, u.created_at
+                    ORDER BY u.created_at DESC
                     LIMIT 1`;
             } else {
                 query += `
@@ -447,12 +452,18 @@ const db = {
                     LIMIT 1`;
             }
 
-            const result = await client.query(query, [
-                userId, 
-                Math.max(14, userAge - 2),
-                Math.min(99, userAge + 2)
-            ]);
+            // Добавим логирование финального запроса
+            console.log('Final query:', query);
+            console.log('Query params:', params);
+
+            const result = await client.query(query, params);
             
+            // Логируем результат
+            console.log('Query result:', result.rows.length, 'profiles found');
+            if (result.rows.length > 0) {
+                console.log('First profile gender:', result.rows[0].gender);
+            }
+
             return {
                 rows: result.rows,
                 message: result.rows.length === 0 ? 'Нет доступных анкет для оценки' : null

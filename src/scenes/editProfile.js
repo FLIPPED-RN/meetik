@@ -55,17 +55,23 @@ const editProfileScene = new Scenes.WizardScene(
             case 'set_preferences_male':
             case 'set_preferences_female':
             case 'set_preferences_any':
-                const preference = action.split('_')[2];
-                await db.updateUserField(ctx.from.id, 'preferences', preference);
-                
-                const preferenceText = {
-                    'male': 'парней',
-                    'female': 'девушек',
-                    'any': 'все анкеты'
-                }[preference];
-                
-                await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`, mainMenu);
-                return ctx.scene.leave();
+                try {
+                    const preference = action.replace('set_preferences_', '');
+                    await db.updateUserField(ctx.from.id, 'preferences', preference);
+                    
+                    const preferenceText = {
+                        'male': 'парней',
+                        'female': 'девушек',
+                        'any': 'все анкеты'
+                    }[preference];
+                    
+                    await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`, mainMenu);
+                    return ctx.scene.leave();
+                } catch (error) {
+                    console.error('Ошибка при обновлении предпочтений:', error);
+                    await ctx.reply('Произошла ошибка при обновлении предпочтений');
+                    return ctx.scene.leave();
+                }
                 break;
         }
         return ctx.wizard.next();
