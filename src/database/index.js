@@ -413,13 +413,26 @@ const db = {
                 : 'gender = $2';
 
             const query = `
-                SELECT DISTINCT u.*, array_agg(p.photo_id) as photos
-                FROM users u
-                LEFT JOIN photos p ON p.user_id = u.user_id
-                WHERE u.user_id != $1
-                AND ${genderCondition}
-                GROUP BY u.user_id
-                ORDER BY RANDOM()
+                WITH RankedProfiles AS (
+                    SELECT DISTINCT ON (u.user_id)
+                        u.*,
+                        array_agg(p.photo_id) as photos,
+                        random() as rand
+                    FROM users u
+                    LEFT JOIN photos p ON p.user_id = u.user_id
+                    WHERE u.user_id != $1
+                    AND ${genderCondition}
+                    GROUP BY u.user_id
+                )
+                SELECT 
+                    user_id, name, age, city, gender, 
+                    preferences, description, username, 
+                    coins, average_rating, last_win_time,
+                    created_at, in_global_rating, 
+                    last_global_win, global_rating_sum,
+                    photos
+                FROM RankedProfiles
+                ORDER BY rand
                 LIMIT 1
             `;
 
