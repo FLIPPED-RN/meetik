@@ -146,10 +146,16 @@ const db = {
     },
 
     updateUserField: async (userId, field, value) => {
-        await pool.query(
-            `UPDATE users SET ${field} = $1 WHERE user_id = $2`,
-            [value, userId]
-        );
+        try {
+            const result = await pool.query(
+                'UPDATE users SET ' + field + ' = $1 WHERE user_id = $2 RETURNING *',
+                [value, userId]
+            );
+            return result.rows[0];
+        } catch (error) {
+            console.error('Ошибка при обновлении поля пользователя:', error);
+            throw error;
+        }
     },
 
     updateUserPhotos: async (userId, photoIds) => {
@@ -403,7 +409,6 @@ const db = {
             }
 
             const userPreferences = userPrefs.rows[0].preferences;
-            const userAge = userPrefs.rows[0].age;
 
             let query = `
                 SELECT 
@@ -426,6 +431,7 @@ const db = {
             } else if (userPreferences === 'female') {
                 query += ` AND u.gender = 'female'`;
             }
+            // Если userPreferences === 'any', то не добавляем фильтр по полу
 
             query += `
                 GROUP BY u.user_id
@@ -454,7 +460,6 @@ const db = {
             if (!user.rows[0]) return null;
 
             const userPreferences = user.rows[0].preferences;
-            const userAge = user.rows[0].age;
 
             let query = `
                 SELECT 
@@ -470,6 +475,7 @@ const db = {
             } else if (userPreferences === 'female') {
                 query += ` AND u.gender = 'female'`;
             }
+            // Если userPreferences === 'any', то не добавляем фильтр по полу
 
             query += `
                 GROUP BY u.user_id

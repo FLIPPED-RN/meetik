@@ -47,7 +47,7 @@ exports.startCommand = async (ctx) => {
         const username = ctx.from.username || null;
         await ctx.scene.enter('registration', { username });
     } else {
-        await ctx.reply('Добро пожаловать в главное меню!', mainMenu);
+        await ctx.reply('Добро пожаловать в МИТИК! Все необходимое можете найти в главном меню.', mainMenu);
     }
 };
 
