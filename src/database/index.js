@@ -394,7 +394,7 @@ const db = {
     getProfilesForRating: async (userId) => {
         const client = await pool.connect();
         try {
-            // Получаем предпочтения пользователя
+            // Получаем предпочтения и возраст пользователя
             const userPrefs = await client.query(`
                 SELECT preferences, age 
                 FROM users 
@@ -409,21 +409,23 @@ const db = {
             }
 
             const userPreferences = userPrefs.rows[0].preferences;
+            const userAge = userPrefs.rows[0].age;
 
             let query = `
+                WITH already_rated AS (
+                    SELECT to_user_id 
+                    FROM ratings 
+                    WHERE from_user_id = $1
+                )
                 SELECT 
                     u.*,
-                    array_agg(p.photo_id) FILTER (WHERE p.photo_id IS NOT NULL) as photos
+                    array_agg(p.photo_id) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
                 WHERE u.user_id != $1
-                AND NOT EXISTS (
-                    SELECT 1 
-                    FROM ratings r 
-                    WHERE r.to_user_id = u.user_id 
-                    AND r.from_user_id = $1
-                    AND r.created_at > NOW() - INTERVAL '1 hour'
-                )`;
+                AND u.user_id NOT IN (SELECT to_user_id FROM already_rated)
+                AND u.age BETWEEN $2 AND $3
+            `;
 
             // Добавляем фильтр по полу в зависимости от предпочтений
             if (userPreferences === 'male') {
@@ -438,7 +440,11 @@ const db = {
                 ORDER BY RANDOM()
                 LIMIT 1`;
 
-            const result = await client.query(query, [userId]);
+            const result = await client.query(query, [
+                userId, 
+                Math.max(14, userAge - 2), // Минимальный возраст не может быть меньше 14
+                Math.min(99, userAge + 2)  // Максимальный возраст не может быть больше 99
+            ]);
             
             return {
                 rows: result.rows,
@@ -460,30 +466,42 @@ const db = {
             if (!user.rows[0]) return null;
 
             const userPreferences = user.rows[0].preferences;
+            const userAge = user.rows[0].age;
 
             let query = `
+                WITH already_rated AS (
+                    SELECT to_user_id 
+                    FROM ratings 
+                    WHERE from_user_id = $1
+                )
                 SELECT 
                     u.*,
-                    array_agg(p.photo_id) FILTER (WHERE p.photo_id IS NOT NULL) as photos
+                    array_agg(p.photo_id) as photos
                 FROM users u
                 LEFT JOIN photos p ON u.user_id = p.user_id
-                WHERE u.user_id != $1`;
+                WHERE u.user_id != $1
+                AND u.user_id NOT IN (SELECT to_user_id FROM already_rated)
+                AND u.age BETWEEN $2 AND $3
+            `;
 
-            // Добавляем фильтр по полу в зависимости от предпочтений
             if (userPreferences === 'male') {
                 query += ` AND u.gender = 'male'`;
             } else if (userPreferences === 'female') {
                 query += ` AND u.gender = 'female'`;
             }
-            // Если userPreferences === 'any', то не добавляем фильтр по полу
 
             query += `
                 GROUP BY u.user_id
                 ORDER BY RANDOM()
                 LIMIT 1`;
 
-            const result = await client.query(query, [userId]);
-            return result.rows[0] || null;
+            const result = await client.query(query, [
+                userId,
+                Math.max(14, userAge - 2),
+                Math.min(99, userAge + 2)
+            ]);
+
+            return result.rows[0];
         } finally {
             client.release();
         }
