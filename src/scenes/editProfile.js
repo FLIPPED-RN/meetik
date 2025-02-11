@@ -63,16 +63,10 @@ const editProfileScene = new Scenes.WizardScene(
                         throw new Error(`Invalid preference value: ${preference}`);
                     }
 
-                    const result = await db.query(`
-                        UPDATE users 
-                        SET preferences = $1 
-                        WHERE user_id = $2 
-                        RETURNING preferences
-                    `, [preference, ctx.from.id]);
+                    const updatedUser = await db.updateUserField(ctx.from.id, 'preferences', preference);
+                    console.log('Updated user:', updatedUser);
 
-                    console.log('Update result:', result.rows[0]);
-
-                    if (!result.rows[0]) {
+                    if (!updatedUser) {
                         throw new Error('Failed to update preferences');
                     }
 
@@ -82,7 +76,11 @@ const editProfileScene = new Scenes.WizardScene(
                         'any': 'все анкеты'
                     }[preference];
 
-                    await ctx.answerCbQuery(`Настройки обновлены: теперь вы будете видеть ${preferenceText}`);
+                    if (ctx.session) {
+                        delete ctx.session.lastProfile;
+                    }
+
+                    await ctx.answerCbQuery(`Настройки обновлены!`);
                     await ctx.reply(`✅ Настройки обновлены: теперь вы будете видеть ${preferenceText}`, mainMenu);
                     return ctx.scene.leave();
                 } catch (error) {

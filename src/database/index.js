@@ -148,19 +148,17 @@ const db = {
     updateUserField: async (userId, field, value) => {
         const client = await pool.connect();
         try {
-            // Добавим логирование
             console.log(`Updating user ${userId} field ${field} with value:`, value);
             
             const query = `
                 UPDATE users 
-                SET ${field} = $1 
+                SET ${field} = $1,
+                    updated_at = NOW()
                 WHERE user_id = $2 
                 RETURNING *
             `;
             
             const result = await client.query(query, [value, userId]);
-            
-            // Проверяем результат
             console.log('Update result:', result.rows[0]);
             
             if (result.rows.length === 0) {
