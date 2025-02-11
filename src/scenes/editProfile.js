@@ -26,71 +26,38 @@ const editProfileScene = new Scenes.WizardScene(
             return ctx.scene.leave();
         }
 
-        switch (action) {
-            case 'edit_name':
-                await ctx.reply('Введите новое имя (только буквы, 2-30 символов):');
-                break;
-            case 'edit_age':
-                await ctx.reply('Введите новый возраст (14-99):');
-                break;
-            case 'edit_city':
-                await ctx.reply('Введите новый город (2-50 символов):');
-                break;
-            case 'edit_description':
-                await ctx.reply('Введите новое описание (до 500 символов) или нажмите кнопку "Пропустить"', {
-                    reply_markup: {
-                        inline_keyboard: [[
-                            { text: 'Пропустить', callback_data: 'skip_description' }
-                        ]]
-                    }
-                });
-                break;
-            case 'edit_photos':
-                ctx.wizard.state.photos = [];
-                await ctx.reply('Отправьте новую фотографию. Старое фото будет заменено.');
-                break;
-            case 'edit_preferences':
-                await ctx.reply('Выберите, кого вы хотите видеть:', editPreferencesKeyboard);
-                break;
-            case 'set_preferences_male':
-            case 'set_preferences_female':
-            case 'set_preferences_any':
-                try {
-                    const preference = action.replace('set_preferences_', '');
-                    console.log('Setting preference to:', preference);
-
-                    if (!['male', 'female', 'any'].includes(preference)) {
-                        throw new Error(`Invalid preference value: ${preference}`);
-                    }
-
-                    const updatedUser = await db.updateUserField(ctx.from.id, 'preferences', preference);
-                    console.log('Updated user:', updatedUser);
-
-                    if (!updatedUser) {
-                        throw new Error('Failed to update preferences');
-                    }
-
-                    const preferenceText = {
-                        'male': 'парней',
-                        'female': 'девушек',
-                        'any': 'все анкеты'
-                    }[preference];
-
-                    if (ctx.session) {
-                        delete ctx.session.lastProfile;
-                    }
-
-                    await ctx.answerCbQuery(`Настройки обновлены!`);
-                    await ctx.reply(`✅ Настройки обновлены: теперь вы будете видеть ${preferenceText}`, mainMenu);
-                    return ctx.scene.leave();
-                } catch (error) {
-                    console.error('Error updating preferences:', error);
-                    await ctx.answerCbQuery('Произошла ошибка при обновлении настроек');
-                    await ctx.reply('Произошла ошибка при обновлении настроек', mainMenu);
-                    return ctx.scene.leave();
+        if (action.startsWith('set_preferences_')) {
+            try {
+                const preference = action.replace('set_preferences_', '');
+                
+                if (!['male', 'female', 'any'].includes(preference)) {
+                    throw new Error(`Invalid preference value: ${preference}`);
                 }
-                break;
+                
+                await db.updateUserField(ctx.from.id, 'preferences', preference);
+                
+                const preferenceText = {
+                    male: 'парней',
+                    female: 'девушек',
+                    any: 'все анкеты'
+                }[preference];
+                
+                if (ctx.session) {
+                    delete ctx.session.lastProfile;
+                }
+                
+                await ctx.answerCbQuery('Настройки обновлены!');
+                await ctx.reply(`✅ Настройки обновлены: теперь вы будете видеть ${preferenceText}`, mainMenu);
+                return ctx.scene.leave();
+            } catch (error) {
+                console.error('Error updating preferences:', error);
+                await ctx.answerCbQuery('Произошла ошибка при обновлении настроек');
+                await ctx.reply('Произошла ошибка при обновлении настроек', mainMenu);
+                return ctx.scene.leave();
+            }
         }
+
+        ctx.wizard.state.editField = action;
         return ctx.wizard.next();
     },
     async (ctx) => {

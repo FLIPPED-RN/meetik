@@ -148,27 +148,11 @@ const db = {
     updateUserField: async (userId, field, value) => {
         const client = await pool.connect();
         try {
-            console.log(`Updating user ${userId} field ${field} with value:`, value);
-            
-            const query = `
-                UPDATE users 
-                SET ${field} = $1,
-                    updated_at = NOW()
-                WHERE user_id = $2 
-                RETURNING *
-            `;
-            
-            const result = await client.query(query, [value, userId]);
-            console.log('Update result:', result.rows[0]);
-            
-            if (result.rows.length === 0) {
-                throw new Error('User not found');
-            }
-            
+            const result = await client.query(
+                'UPDATE users SET $2:name = $3 WHERE user_id = $1 RETURNING *',
+                [userId, field, value]
+            );
             return result.rows[0];
-        } catch (error) {
-            console.error('Error updating user field:', error);
-            throw error;
         } finally {
             client.release();
         }
@@ -407,9 +391,10 @@ const db = {
         };
     },
 
-    getProfilesForRating: async (userId, forceFresh = false) => {
+    getProfilesForRating: async (userId) => {
         const client = await pool.connect();
         try {
+            // Получаем актуальные предпочтения пользователя
             const userPrefs = await client.query(`
                 SELECT preferences, age 
                 FROM users 
@@ -417,63 +402,32 @@ const db = {
             `, [userId]);
 
             if (!userPrefs.rows[0]) {
-                return { 
-                    rows: [], 
-                    message: 'Профиль не найден' 
-                };
+                return { rows: [], message: 'Профиль не найден' };
             }
 
             const userPreferences = userPrefs.rows[0].preferences;
-            const userAge = userPrefs.rows[0].age;
+            
+            // Формируем условие для пола на основе предпочтений
+            const genderCondition = userPreferences === 'any' 
+                ? 'TRUE' 
+                : 'gender = $2';
 
-            console.log('User preferences:', userPreferences);
-
-            let query = `
-                WITH already_rated AS (
-                    SELECT to_user_id 
-                    FROM ratings 
-                    WHERE from_user_id = $1
-                )
-                SELECT 
-                    u.*,
-                    array_remove(array_agg(p.photo_id), NULL) as photos
+            const query = `
+                SELECT DISTINCT u.*, array_agg(p.photo_id) as photos
                 FROM users u
-                LEFT JOIN photos p ON u.user_id = p.user_id
+                LEFT JOIN photos p ON p.user_id = u.user_id
                 WHERE u.user_id != $1
-                AND u.user_id NOT IN (SELECT to_user_id FROM already_rated)
-                AND u.age BETWEEN $2 AND $3
+                AND ${genderCondition}
+                GROUP BY u.user_id
+                ORDER BY RANDOM()
+                LIMIT 1
             `;
 
-            const params = [userId, Math.max(14, userAge - 2), Math.min(99, userAge + 2)];
-
-            if (userPreferences === 'male') {
-                query += ` AND u.gender = 'male'`;
-            } else if (userPreferences === 'female') {
-                query += ` AND u.gender = 'female'`;
-            }
-
-            if (forceFresh) {
-                query += `
-                    GROUP BY u.user_id, u.created_at
-                    ORDER BY u.created_at DESC
-                    LIMIT 1`;
-            } else {
-                query += `
-                    GROUP BY u.user_id
-                    ORDER BY random()
-                    LIMIT 1`;
-            }
-
-            console.log('Final query:', query);
-            console.log('Query params:', params);
+            const params = userPreferences === 'any' 
+                ? [userId] 
+                : [userId, userPreferences];
 
             const result = await client.query(query, params);
-            
-            console.log('Query result:', result.rows.length, 'profiles found');
-            if (result.rows.length > 0) {
-                console.log('First profile gender:', result.rows[0].gender);
-            }
-
             return {
                 rows: result.rows,
                 message: result.rows.length === 0 ? 'Нет доступных анкет для оценки' : null
