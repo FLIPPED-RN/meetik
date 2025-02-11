@@ -146,15 +146,33 @@ const db = {
     },
 
     updateUserField: async (userId, field, value) => {
+        const client = await pool.connect();
         try {
-            const result = await pool.query(
-                'UPDATE users SET ' + field + ' = $1 WHERE user_id = $2 RETURNING *',
-                [value, userId]
-            );
+            // Добавим логирование
+            console.log(`Updating user ${userId} field ${field} with value:`, value);
+            
+            const query = `
+                UPDATE users 
+                SET ${field} = $1 
+                WHERE user_id = $2 
+                RETURNING *
+            `;
+            
+            const result = await client.query(query, [value, userId]);
+            
+            // Проверяем результат
+            console.log('Update result:', result.rows[0]);
+            
+            if (result.rows.length === 0) {
+                throw new Error('User not found');
+            }
+            
             return result.rows[0];
         } catch (error) {
-            console.error('Ошибка при обновлении поля пользователя:', error);
+            console.error('Error updating user field:', error);
             throw error;
+        } finally {
+            client.release();
         }
     },
 

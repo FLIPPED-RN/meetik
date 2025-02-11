@@ -57,13 +57,30 @@ const editProfileScene = new Scenes.WizardScene(
             case 'set_preferences_any':
                 try {
                     const preference = action.replace('set_preferences_', '');
-                    await db.updateUserField(ctx.from.id, 'preferences', preference);
+                    
+                    console.log('Updating preferences to:', preference);
+                    
+                    if (!['male', 'female', 'any'].includes(preference)) {
+                        throw new Error('Invalid preference value');
+                    }
+                    
+                    const updated = await db.updateUserField(ctx.from.id, 'preferences', preference);
+                    
+                    console.log('Updated user:', updated);
+                    
+                    if (!updated) {
+                        throw new Error('Failed to update preferences');
+                    }
                     
                     const preferenceText = {
                         'male': 'парней',
                         'female': 'девушек',
                         'any': 'все анкеты'
                     }[preference];
+                    
+                    if (ctx.session) {
+                        delete ctx.session.lastProfile;
+                    }
                     
                     await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`, mainMenu);
                     return ctx.scene.leave();
