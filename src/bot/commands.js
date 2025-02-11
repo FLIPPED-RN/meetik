@@ -95,17 +95,25 @@ ${user.description ? `\n📄 О себе: ${user.description}` : ''}`;
 
 exports.startRatingCommand = async (ctx) => {
     try {
+        // Очищаем возможный кэш состояния
+        ctx.session = {};
+        
         const result = await db.getProfilesForRating(ctx.from.id);
         
         // Если есть сообщение о недоступности анкет
         if (result.message) {
-            await ctx.reply(result.message);
-            return;
+            // Пробуем получить свежие анкеты
+            const freshResult = await db.getProfilesForRating(ctx.from.id, true);
+            if (freshResult.message) {
+                await ctx.reply('Нет доступных анкет для оценки. Попробуйте позже, когда появятся новые пользователи.');
+                return;
+            }
+            result = freshResult;
         }
 
         // Если нет доступных анкет
         if (!result.rows || result.rows.length === 0) {
-            await ctx.reply('Нет доступных анкет для оценки.');
+            await ctx.reply('Нет доступных анкет для оценки. Попробуйте позже, когда появятся новые пользователи.');
             return;
         }
 

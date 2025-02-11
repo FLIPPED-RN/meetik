@@ -391,7 +391,7 @@ const db = {
         };
     },
 
-    getProfilesForRating: async (userId) => {
+    getProfilesForRating: async (userId, forceFresh = false) => {
         const client = await pool.connect();
         try {
             // Получаем предпочтения и возраст пользователя
@@ -417,7 +417,7 @@ const db = {
                     FROM ratings 
                     WHERE from_user_id = $1
                 )
-                SELECT 
+                SELECT DISTINCT ON (u.user_id)
                     u.*,
                     array_agg(p.photo_id) as photos
                 FROM users u
@@ -433,17 +433,24 @@ const db = {
             } else if (userPreferences === 'female') {
                 query += ` AND u.gender = 'female'`;
             }
-            // Если userPreferences === 'any', то не добавляем фильтр по полу
 
-            query += `
-                GROUP BY u.user_id
-                ORDER BY RANDOM()
-                LIMIT 1`;
+            // Если запрошены свежие анкеты, добавляем сортировку по времени создания
+            if (forceFresh) {
+                query += `
+                    GROUP BY u.user_id
+                    ORDER BY u.user_id, u.created_at DESC
+                    LIMIT 1`;
+            } else {
+                query += `
+                    GROUP BY u.user_id
+                    ORDER BY RANDOM()
+                    LIMIT 1`;
+            }
 
             const result = await client.query(query, [
                 userId, 
-                Math.max(14, userAge - 2), // Минимальный возраст не может быть меньше 14
-                Math.min(99, userAge + 2)  // Максимальный возраст не может быть больше 99
+                Math.max(14, userAge - 2),
+                Math.min(99, userAge + 2)
             ]);
             
             return {
