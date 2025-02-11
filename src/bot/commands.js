@@ -671,6 +671,17 @@ exports.registerBotActions = (bot) => {
             await ctx.answerCbQuery('Произошла ошибка при проверке подписки');
         }
     });
+
+    // Добавляем обработчик для кнопки изменения предпочтений
+    bot.action('edit_preferences', async (ctx) => {
+        try {
+            await ctx.answerCbQuery();
+            await ctx.reply('Кого вы хотите видеть в анкетах?', editPreferencesKeyboard);
+        } catch (error) {
+            console.error('Ошибка при показе клавиатуры предпочтений:', error);
+            await ctx.reply('Произошла ошибка. Попробуйте позже.');
+        }
+    });
 };
 
 async function startFinalVoting(bot) {
