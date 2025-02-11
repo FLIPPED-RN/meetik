@@ -19,7 +19,7 @@ const editProfileScene = new Scenes.WizardScene(
         if (!ctx.callbackQuery) return;
 
         const action = ctx.callbackQuery.data;
-        ctx.wizard.state.editField = action;
+        console.log('Received action:', action);
 
         if (action === 'cancel_edit') {
             await ctx.reply('Редактирование отменено', mainMenu);
@@ -57,36 +57,38 @@ const editProfileScene = new Scenes.WizardScene(
             case 'set_preferences_any':
                 try {
                     const preference = action.replace('set_preferences_', '');
-                    
-                    console.log('Updating preferences to:', preference);
-                    
+                    console.log('Setting preference to:', preference);
+
                     if (!['male', 'female', 'any'].includes(preference)) {
-                        throw new Error('Invalid preference value');
+                        throw new Error(`Invalid preference value: ${preference}`);
                     }
-                    
-                    const updated = await db.updateUserField(ctx.from.id, 'preferences', preference);
-                    
-                    console.log('Updated user:', updated);
-                    
-                    if (!updated) {
+
+                    const result = await db.query(`
+                        UPDATE users 
+                        SET preferences = $1 
+                        WHERE user_id = $2 
+                        RETURNING preferences
+                    `, [preference, ctx.from.id]);
+
+                    console.log('Update result:', result.rows[0]);
+
+                    if (!result.rows[0]) {
                         throw new Error('Failed to update preferences');
                     }
-                    
+
                     const preferenceText = {
                         'male': 'парней',
                         'female': 'девушек',
                         'any': 'все анкеты'
                     }[preference];
-                    
-                    if (ctx.session) {
-                        delete ctx.session.lastProfile;
-                    }
-                    
-                    await ctx.reply(`✅ Теперь вы будете видеть ${preferenceText}`, mainMenu);
+
+                    await ctx.answerCbQuery(`Настройки обновлены: теперь вы будете видеть ${preferenceText}`);
+                    await ctx.reply(`✅ Настройки обновлены: теперь вы будете видеть ${preferenceText}`, mainMenu);
                     return ctx.scene.leave();
                 } catch (error) {
-                    console.error('Ошибка при обновлении предпочтений:', error);
-                    await ctx.reply('Произошла ошибка при обновлении предпочтений');
+                    console.error('Error updating preferences:', error);
+                    await ctx.answerCbQuery('Произошла ошибка при обновлении настроек');
+                    await ctx.reply('Произошла ошибка при обновлении настроек', mainMenu);
                     return ctx.scene.leave();
                 }
                 break;
