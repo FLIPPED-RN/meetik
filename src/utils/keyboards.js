@@ -9,6 +9,18 @@ exports.mainMenu = {
     }
 };
 
+exports.preferencesKeyboard = {
+    reply_markup: {
+        inline_keyboard: [
+            [
+                { text: 'Парней ♂️', callback_data: 'pref_male' },
+                { text: 'Девушек ♀️', callback_data: 'pref_female' }
+            ],
+            [{ text: 'Неважно 🤝', callback_data: 'pref_any' }]
+        ]
+    }
+};
+
 exports.genderKeyboard = {
     reply_markup: {
         inline_keyboard: [

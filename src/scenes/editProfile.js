@@ -1,6 +1,6 @@
 const { Scenes } = require('telegraf');
 const validators = require('../utils/validators');
-const { mainMenu, editProfileKeyboard, editPreferencesKeyboard } = require('../utils/keyboards');
+const { mainMenu, preferencesKeyboard } = require('../utils/keyboards');
 const db = require('../database');
 
 const editProfileScene = new Scenes.WizardScene(
