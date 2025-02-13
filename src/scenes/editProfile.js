@@ -12,54 +12,74 @@ const editProfileScene = new Scenes.WizardScene(
             return ctx.scene.leave();
         }
 
-        await ctx.reply('Что вы хотите изменить?', editProfileKeyboard);
+        await ctx.reply('Что вы хотите изменить?', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Имя ✏️', callback_data: 'edit_name' }],
+                    [{ text: 'Возраст 🎂', callback_data: 'edit_age' }],
+                    [{ text: 'Город 🌆', callback_data: 'edit_city' }],
+                    [{ text: 'Пол 🚻', callback_data: 'edit_gender' }],
+                    [{ text: 'Описание 📝', callback_data: 'edit_description' }],
+                    [{ text: 'Фотографии 📸', callback_data: 'edit_photos' }],
+                    [{ text: 'Предпочтения ❤️', callback_data: 'edit_preferences' }],
+                    [{ text: 'Отмена ❌', callback_data: 'cancel_edit' }]
+                ]
+            }
+        });
         return ctx.wizard.next();
     },
     async (ctx) => {
         if (!ctx.callbackQuery) return;
 
         const action = ctx.callbackQuery.data;
-        console.log('Received action:', action);
+        ctx.wizard.state.editField = action;
 
         if (action === 'cancel_edit') {
             await ctx.reply('Редактирование отменено', mainMenu);
             return ctx.scene.leave();
         }
 
-        if (action.startsWith('set_preferences_')) {
-            try {
-                const preference = action.replace('set_preferences_', '');
-                
-                if (!['male', 'female', 'any'].includes(preference)) {
-                    throw new Error(`Invalid preference value: ${preference}`);
-                }
-                
-                await db.updateUserField(ctx.from.id, 'preferences', preference);
-                
-                const preferenceText = {
-                    male: 'парней',
-                    female: 'девушек',
-                    any: 'все анкеты'
-                }[preference];
-                
-                if (ctx.session) {
-                    delete ctx.session.lastProfile;
-                }
-                
-                await ctx.answerCbQuery('Настройки обновлены!');
-                await ctx.reply(`✅ Настройки обновлены: теперь вы будете видеть ${preferenceText}`, mainMenu);
-                return ctx.scene.leave();
-            } catch (error) {
-                console.error('Error updating preferences:', error);
-                await ctx.answerCbQuery('Произошла ошибка при обновлении настроек');
-                await ctx.reply('Произошла ошибка при обновлении настроек', mainMenu);
-                return ctx.scene.leave();
-            }
+        switch (action) {
+            case 'edit_name':
+                await ctx.reply('Введите новое имя (только буквы, 2-30 символов):');
+                break;
+            case 'edit_age':
+                await ctx.reply('Введите новый возраст (14-99):');
+                break;
+            case 'edit_city':
+                await ctx.reply('Введите новый город (2-50 символов):');
+                break;
+            case 'edit_gender':
+                await ctx.reply('Выберите пол:', {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: 'Мужской', callback_data: 'pref_male' }],
+                            [{ text: 'Женский', callback_data: 'pref_female' }],
+                            [{ text: 'Любой', callback_data: 'pref_any' }]
+                        ]
+                    }
+                });
+                break;
+            case 'edit_preferences':
+                await ctx.reply('Кого вы хотите найти?', preferencesKeyboard);
+                break;
+            case 'edit_description':
+                await ctx.reply('Введите новое описание (до 500 символов) или нажмите кнопку "Пропустить"', {
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: 'Пропустить', callback_data: 'skip_description' }
+                        ]]
+                    }
+                });
+                break;
+            case 'edit_photos':
+                ctx.wizard.state.photos = [];
+                await ctx.reply('Отправьте новую фотографию. Старое фото будкт заменено.');
+                break;
         }
-
-        ctx.wizard.state.editField = action;
         return ctx.wizard.next();
     },
+    
     async (ctx) => {
         const editField = ctx.wizard.state.editField;
 
@@ -89,6 +109,26 @@ const editProfileScene = new Scenes.WizardScene(
                         return;
                     }
                     await db.updateUserField(ctx.from.id, 'city', city);
+                    break;
+
+                case 'edit_gender':
+                    if (!ctx.callbackQuery || !['pref_male', 'pref_female', 'pref_any'].includes(ctx.callbackQuery.data)) {
+                        await ctx.reply('Пожалуйста, выберите пол, используя кнопки выше');
+                        return;
+                    }
+                    const gender = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
+                                   ctx.callbackQuery.data === 'pref_female' ? 'female' : 'any';
+                    await db.updateUserField(ctx.from.id, 'gender', gender);
+                    break;
+
+                case 'edit_preferences':
+                    if (!ctx.callbackQuery || !['pref_male', 'pref_female', 'pref_any'].includes(ctx.callbackQuery.data)) {
+                        await ctx.reply('Пожалуйста, выберите предпочтения, используя кнопки выше');
+                        return;
+                    }
+                    const preferences = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
+                                       ctx.callbackQuery.data === 'pref_female' ? 'female' : 'any';
+                    await db.updateUserField(ctx.from.id, 'preferences', preferences);
                     break;
 
                 case 'edit_description':

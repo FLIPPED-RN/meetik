@@ -146,16 +146,10 @@ const db = {
     },
 
     updateUserField: async (userId, field, value) => {
-        const client = await pool.connect();
-        try {
-            const result = await client.query(
-                'UPDATE users SET $2:name = $3 WHERE user_id = $1 RETURNING *',
-                [userId, field, value]
-            );
-            return result.rows[0];
-        } finally {
-            client.release();
-        }
+        await pool.query(
+            `UPDATE users SET ${field} = $1 WHERE user_id = $2`,
+            [value, userId]
+        );
     },
 
     updateUserPhotos: async (userId, photoIds) => {
