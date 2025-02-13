@@ -445,55 +445,60 @@ const db = {
     },
 
     getNextProfile: async (userId) => {
-        const client = await pool.connect();
-        try {
-            const user = await client.query(`
-                SELECT preferences, age 
-                FROM users 
-                WHERE user_id = $1`, [userId]);
-            
-            if (!user.rows[0]) return null;
-
-            const userPreferences = user.rows[0].preferences;
-            const userAge = user.rows[0].age;
-
-            let query = `
-                WITH already_rated AS (
-                    SELECT to_user_id 
-                    FROM ratings 
-                    WHERE from_user_id = $1
-                )
-                SELECT 
-                    u.*,
-                    array_agg(p.photo_id) as photos
-                FROM users u
-                LEFT JOIN photos p ON u.user_id = p.user_id
-                WHERE u.user_id != $1
-                AND u.user_id NOT IN (SELECT to_user_id FROM already_rated)
-                AND u.age BETWEEN $2 AND $3
-            `;
-
-            if (userPreferences === 'male') {
-                query += ` AND u.gender = 'male'`;
-            } else if (userPreferences === 'female') {
-                query += ` AND u.gender = 'female'`;
-            }
-
-            query += `
-                GROUP BY u.user_id
-                ORDER BY RANDOM()
-                LIMIT 1`;
-
-            const result = await client.query(query, [
-                userId,
-                Math.max(14, userAge - 2),
-                Math.min(99, userAge + 2)
-            ]);
-
-            return result.rows[0];
-        } finally {
-            client.release();
+        const user = await pool.query(`SELECT preferences FROM users WHERE user_id = $1`, [userId]);
+        if (!user.rows[0]) return null;
+        
+        let genderCondition = '';
+        if (user.rows[0].preferences === 'male') {
+            genderCondition = 'AND u.gender = \'male\'';
+        } else if (user.rows[0].preferences === 'female') {
+            genderCondition = 'AND u.gender = \'female\'';
         }
+
+        const result = await pool.query(`
+            SELECT u.*, array_agg(p.photo_id) as photos
+            FROM users u
+            LEFT JOIN photos p ON u.user_id = p.user_id
+            WHERE u.user_id != $1
+            ${genderCondition}
+            AND (
+                -- Показываем профиль если:
+                (
+                    -- Это обычная оценка (не участник глобальной оценки)
+                    u.in_global_rating = false
+                    AND (
+                        u.last_win_time IS NULL 
+                        OR u.last_win_time < NOW() - INTERVAL '1 hour'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM ratings r
+                        WHERE r.from_user_id = $1 
+                        AND r.to_user_id = u.user_id
+                        AND (r.created_at > NOW() - INTERVAL '1 hour' OR r.is_skip = true)
+                    )
+                )
+                OR
+                -- ИЛИ это участник глобальной оценки
+                (
+                    u.in_global_rating = true
+                    AND NOT EXISTS (
+                        SELECT 1 FROM global_ratings gr
+                        WHERE gr.from_user_id = $1 
+                        AND gr.to_user_id = u.user_id
+                        AND gr.round_id = (
+                            SELECT id FROM global_rounds 
+                            WHERE is_active = true
+                            LIMIT 1
+                        )
+                    )
+                )
+            )
+            GROUP BY u.user_id
+            ORDER BY RANDOM()
+            LIMIT 1
+        `, [userId]);
+
+        return result.rows[0];
     },
 
     getCurrentRoundWinners: async () => {

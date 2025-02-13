@@ -151,16 +151,15 @@ exports.leadersCommand = async (ctx) => {
 
 exports.whoRatedMeCommand = (bot) => async (ctx) => {
     try {
-        // Получаем все уникальные оценки один раз
         const ratings = await db.getLastRatings(ctx.from.id);
+        
+        if (!ratings || ratings.length === 0) {
+            return ctx.reply('Пока никто не оценил ваш профиль.');
+        }
+
         const uniqueRatings = ratings.filter((rating, index, self) =>
             index === self.findIndex((r) => r.from_user_id === rating.from_user_id)
-        );
-        const totalRatings = uniqueRatings.length;
-
-        if (totalRatings === 0) {
-            return await ctx.reply('У вас пока нет оценок 😔');
-        }
+        ).slice(0, 10);
 
         const showRating = async (ctx, index) => {
             try {
@@ -172,28 +171,13 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
                     raterProfile.username.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1') : '';
 
                 const keyboard = {
-                    inline_keyboard: [
-                        [
-                            {
-                                text: '⬅️',
-                                callback_data: `rating_prev_${index}`
-                            },
-                            {
-                                text: `${index + 1}/${totalRatings}`,
-                                callback_data: 'rating_count'
-                            },
-                            {
-                                text: '➡️',
-                                callback_data: `rating_next_${index}`
-                            }
-                        ]
-                    ]
+                    inline_keyboard: profileNavigationKeyboard(index, uniqueRatings.length).inline_keyboard
                 };
 
                 const caption = `👤 *${raterProfile.name}*, ${raterProfile.age} лет\n` +
                               `🌆 ${raterProfile.city}\n` +
                               `⭐️ Оценка: ${rating.rating}/10\n` +
-                              `${raterProfile.username && rating.rating >= 7 ? `📱 @${escapedUsername}\n` : ''}`;
+                              `${raterProfile.username ? `📱 @${escapedUsername}\n` : ''}`;
 
                 if (ctx.callbackQuery) {
                     if (photos.length > 0) {
@@ -234,17 +218,17 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         // Показываем первую оценку
         await showRating(ctx, 0);
 
-        // Обработчики кнопок навигации используют тот же массив uniqueRatings
+        // Обработчики кнопок навигации
         bot.action(/rating_prev_(\d+)/, async (ctx) => {
             const index = parseInt(ctx.match[1]);
-            const newIndex = index > 0 ? index - 1 : totalRatings - 1;
+            const newIndex = index > 0 ? index - 1 : uniqueRatings.length - 1;
             await ctx.answerCbQuery();
             await showRating(ctx, newIndex);
         });
 
         bot.action(/rating_next_(\d+)/, async (ctx) => {
             const index = parseInt(ctx.match[1]);
-            const newIndex = index < totalRatings - 1 ? index + 1 : 0;
+            const newIndex = index < uniqueRatings.length - 1 ? index + 1 : 0;
             await ctx.answerCbQuery();
             await showRating(ctx, newIndex);
         });
