@@ -504,9 +504,9 @@ exports.registerBotActions = (bot) => {
                 } else {
                     await ctx.reply('Вы оценили все анкеты глобального рейтинга! Теперь вам будут показаны обычные анкеты.');
                     
-                    const regularProfiles = await db.getProfilesForRating(ctx.from.id);
-                    if (regularProfiles && regularProfiles.length > 0) {
-                        await sendProfileForRating(ctx, regularProfiles[0]);
+                    const result = await db.getProfilesForRating(ctx.from.id);
+                    if (result.rows && result.rows.length > 0) {
+                        await sendProfileForRating(ctx, result.rows[0]);
                     } else {
                         await ctx.reply('На данный момент доступных анкет больше нет. Попробуйте позже! 😊', mainMenu);
                     }
@@ -547,12 +547,13 @@ exports.registerBotActions = (bot) => {
                 }
             }
 
-            const nextProfile = await db.getNextProfile(ctx.from.id);
-            if (!nextProfile) {
+            // Получаем следующую анкету
+            const nextResult = await db.getProfilesForRating(ctx.from.id);
+            if (nextResult.rows && nextResult.rows.length > 0) {
+                await sendProfileForRating(ctx, nextResult.rows[0]);
+            } else {
                 await ctx.reply('На данный момент доступных анкет больше нет. Попробуйте позже! 😊', mainMenu);
-                return;
             }
-            await sendProfileForRating(ctx, nextProfile);
         } catch (error) {
             console.error('Ошибка при сохранении оценки:', error);
             await ctx.answerCbQuery('Произошла ошибка при сохранении оценки');
