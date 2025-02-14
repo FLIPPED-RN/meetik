@@ -388,7 +388,7 @@ const db = {
     getProfilesForRating: async (userId) => {
         const client = await pool.connect();
         try {
-            // Получаем актуальные предпочтения пользователя
+            // Получаем актуальные предпочтения и возраст пользователя
             const userPrefs = await client.query(`
                 SELECT preferences, age 
                 FROM users 
@@ -400,6 +400,7 @@ const db = {
             }
 
             const userPreferences = userPrefs.rows[0].preferences;
+            const userAge = userPrefs.rows[0].age;
             
             // Формируем условие для пола на основе предпочтений
             const genderCondition = userPreferences === 'any' 
@@ -416,6 +417,8 @@ const db = {
                     LEFT JOIN photos p ON p.user_id = u.user_id
                     WHERE u.user_id != $1
                     AND ${genderCondition}
+                    AND u.age >= $3  -- Минимальный возраст
+                    AND u.age <= $4  -- Максимальный возраст
                     AND NOT EXISTS (
                         SELECT 1 
                         FROM ratings r 
@@ -437,9 +440,12 @@ const db = {
                 LIMIT 1
             `;
 
+            const minAge = Math.max(16, userAge - 2); // Не меньше 16 лет
+            const maxAge = userAge + 2;
+
             const params = userPreferences === 'any' 
-                ? [userId] 
-                : [userId, userPreferences];
+                ? [userId, minAge, maxAge] 
+                : [userId, userPreferences, minAge, maxAge];
 
             const result = await client.query(query, params);
             return {
