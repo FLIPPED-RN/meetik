@@ -567,7 +567,7 @@ exports.registerBotActions = (bot) => {
             // Проверяем, активен ли сейчас финальный раунд
             const currentRound = await db.getCurrentGlobalRound();
             if (!currentRound?.is_final_voting) {
-                await ctx.answerCbQuery('Финальное голосование уже завершено!');
+                await ctx.answerCbQuery('Финальное голосование уже завершено!');    
                 return;
             }
 

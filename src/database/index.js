@@ -416,6 +416,13 @@ const db = {
                     LEFT JOIN photos p ON p.user_id = u.user_id
                     WHERE u.user_id != $1
                     AND ${genderCondition}
+                    AND NOT EXISTS (
+                        SELECT 1 
+                        FROM ratings r 
+                        WHERE r.to_user_id = u.user_id 
+                        AND r.from_user_id = $1
+                        AND r.created_at > NOW() - INTERVAL '1 hour'
+                    )
                     GROUP BY u.user_id
                 )
                 SELECT 
