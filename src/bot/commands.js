@@ -42,12 +42,36 @@ ${isGlobalParticipant ? '\n🌍 *Участвует в глобальном ре
 }
 
 exports.startCommand = async (ctx) => {
-    const user = await db.getUserProfile(ctx.from.id);
-    if (!user) {
-        const username = ctx.from.username || null;
-        await ctx.scene.enter('registration', { username });
-    } else {
-        await ctx.reply('Добро пожаловать в МИТИК! Все необходимое можете найти в главном меню.', mainMenu);
+    try {
+        // Проверяем подписку на канал
+        const chatMember = await ctx.telegram.getChatMember('@meetik_info', ctx.from.id);
+        
+        if (['creator', 'administrator', 'member'].includes(chatMember.status)) {
+            const user = await db.getUserProfile(ctx.from.id);
+            
+            if (user) {
+                await db.updateUserStatus(ctx.from.id, true);
+                await ctx.reply('С возвращением в МИТИК! Все необходимое можете найти в главном меню.', mainMenu);
+            } else {
+                const username = ctx.from.username || null;
+                await ctx.scene.enter('registration', { username });
+            }
+        } else {
+            const keyboard = {
+                inline_keyboard: [
+                    [{ text: '📢 Подписаться на канал', url: 'https://t.me/meetik_info' }],
+                    [{ text: '🔄 Проверить подписку', callback_data: 'check_subscription' }]
+                ]
+            };
+
+            await ctx.reply(
+                '👋 Добро пожаловать!\n\n❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
+                { reply_markup: keyboard }
+            );
+        }
+    } catch (error) {
+        console.error('Ошибка при выполнении команды start:', error);
+        await ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.');
     }
 };
 
@@ -393,6 +417,27 @@ async function broadcastTop10(bot) {
 
 exports.broadcastGlobalResults = broadcastGlobalResults;
 
+async function safeSendMessage(bot, userId, message, extra = {}) {
+    try {
+        await bot.telegram.sendMessage(userId, message, extra);
+        return true;
+    } catch (error) {
+        if (error.description?.includes('bot was blocked by the user') || 
+            error.message?.includes('bot was blocked by the user') ||
+            error.code === 403) {
+            // Обновляем статус пользователя в БД
+            try {
+                await db.updateUserStatus(userId, false);
+            } catch (dbError) {
+                console.error('Ошибка обновления статуса пользователя:', dbError);
+            }
+        } else {
+            console.error(`Ошибка отправки сообщения пользователю ${userId}:`, error);
+        }
+        return false;
+    }
+}
+
 async function broadcastGlobalResults(bot, winners) {
     try {
         const users = await db.getAllUsers();
@@ -410,27 +455,25 @@ async function broadcastGlobalResults(bot, winners) {
 
         // Отправляем результаты всем пользователям
         for (const user of users) {
-            try {
-                // Проверяем, является ли пользователь победителем
-                const userWinner = winners.find(w => w.user_id === user.user_id);
-                
-                if (userWinner) {
-                    // Персональное сообщение победителю
-                    await bot.telegram.sendMessage(user.user_id, 
-                        `🎉 *Поздравляем!*\n\n` +
-                        `Вы заняли ${userWinner.place} место в глобальном рейтинге!\n` +
-                        `💰 Вам начислено ${userWinner.coins_received} монет!\n\n` +
-                        resultsText,
-                        { parse_mode: 'Markdown' }
-                    );
-                } else {
-                    // Общее сообщение остальным пользователям
-                    await bot.telegram.sendMessage(user.user_id, resultsText, 
-                        { parse_mode: 'Markdown' }
-                    );
-                }
-            } catch (error) {
-                console.error(`Ошибка отправки результатов пользователю ${user.user_id}:`, error);
+            const userWinner = winners.find(w => w.user_id === user.user_id);
+            
+            if (userWinner) {
+                await safeSendMessage(
+                    bot,
+                    user.user_id,
+                    `🎉 *Поздравляем!*\n\n` +
+                    `Вы заняли ${userWinner.place} место в глобальном рейтинге!\n` +
+                    `💰 Вам начислено ${userWinner.coins_received} монет!\n\n` +
+                    resultsText,
+                    { parse_mode: 'Markdown' }
+                );
+            } else {
+                await safeSendMessage(
+                    bot,
+                    user.user_id,
+                    resultsText,
+                    { parse_mode: 'Markdown' }
+                );
             }
         }
     } catch (error) {

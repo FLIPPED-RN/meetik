@@ -5,7 +5,27 @@ const errorHandler = async (ctx, next) => {
         await next();
     } catch (error) {
         console.error('Ошибка в middleware:', error);
-        await ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.');
+        
+        // Проверяем, не заблокировал ли пользователь бота
+        if (error.description?.includes('bot was blocked by the user') || 
+            error.message?.includes('bot was blocked by the user') ||
+            error.code === 403) {
+            // Можно добавить логику для обработки блокировки
+            // Например, пометить пользователя как неактивного в БД
+            try {
+                await db.updateUserStatus(ctx.from.id, false);
+            } catch (dbError) {
+                console.error('Ошибка обновления статуса пользователя:', dbError);
+            }
+            return;
+        }
+
+        // Для остальных ошибок пытаемся отправить сообщение
+        try {
+            await ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.');
+        } catch (replyError) {
+            console.error('Ошибка отправки сообщения об ошибке:', replyError);
+        }
     }
 };
 

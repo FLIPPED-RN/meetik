@@ -22,7 +22,8 @@ const db = {
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     in_global_rating BOOLEAN DEFAULT false,
                     last_global_win TIMESTAMP,
-                    global_rating_sum INTEGER DEFAULT 0
+                    global_rating_sum INTEGER DEFAULT 0,
+                    is_active BOOLEAN DEFAULT true
                 );
 
                 CREATE TABLE IF NOT EXISTS global_ratings (
@@ -965,6 +966,36 @@ const db = {
         
         return result.rows[0];
     },
+
+    updateUserStatus: async (userId, isActive) => {
+        const client = await pool.connect();
+        try {
+            await client.query(`
+                UPDATE users 
+                SET is_active = $1 
+                WHERE user_id = $2
+            `, [isActive, userId]);
+        } catch (error) {
+            console.error('Ошибка обновления статуса пользователя:', error);
+            throw error;
+        } finally {
+            client.release();
+        }
+    },
+    
+    // При получении списка пользователей теперь учитываем их статус
+    getAllUsers: async () => {
+        const client = await pool.connect();
+        try {
+            const result = await client.query(`
+                SELECT * FROM users 
+                WHERE is_active = true
+            `);
+            return result.rows;
+        } finally {
+            client.release();
+        }
+    }
 }
 
 module.exports = db;
