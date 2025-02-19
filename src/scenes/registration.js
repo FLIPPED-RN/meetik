@@ -147,16 +147,19 @@ const registrationScene = new Scenes.WizardScene(
     }
 );
 
-// Добавляем обработчик ошибок для сцены
-registrationScene.catch((error, ctx) => {
-    console.error('Ошибка в сцене регистрации:', error);
+// Добавляем middleware для обработки ошибок
+registrationScene.use(async (ctx, next) => {
     try {
-        ctx.reply('Произошла ошибка при регистрации. Пожалуйста, используйте /start для повторной попытки')
-            .catch(err => console.error('Ошибка отправки сообщения об ошибке:', err));
-    } catch (e) {
-        console.error('Ошибка при обработке ошибки регистрации:', e);
+        return await next();
+    } catch (error) {
+        console.error('Ошибка в сцене регистрации:', error);
+        try {
+            await ctx.reply('Произошла ошибка при регистрации. Пожалуйста, используйте /start для повторной попытки');
+        } catch (e) {
+            console.error('Ошибка при отправке сообщения об ошибке:', e);
+        }
+        return ctx.scene.leave();
     }
-    return ctx.scene.leave();
 });
 
 module.exports = registrationScene; 
