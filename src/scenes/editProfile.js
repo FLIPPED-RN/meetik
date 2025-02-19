@@ -163,11 +163,30 @@ const editProfileScene = new Scenes.WizardScene(
                     break;
             }
 
+            await db.updateUserProfile(ctx.from.id, updates);
             await ctx.reply('Изменения сохранены!', mainMenu);
             return ctx.scene.leave();
         } catch (error) {
             console.error('Ошибка при обновлении профиля:', error);
-            await ctx.reply('Произошла ошибка при обновлении. Попробуйте позже.');
+            // Проверяем, не заблокировал ли пользователь бота
+            if (error.description?.includes('bot was blocked') || 
+                error.message?.includes('bot was blocked') ||
+                error.code === 403) {
+                // Обновляем статус пользователя в БД
+                try {
+                    await db.updateUserStatus(ctx.from.id, false);
+                    console.log(`Пользователь ${ctx.from.id} заблокировал бота`);
+                } catch (dbError) {
+                    console.error('Ошибка обновления статуса пользователя:', dbError);
+                }
+            } else {
+                // Пытаемся отправить сообщение об ошибке только если это не блокировка
+                try {
+                    await ctx.reply('Произошла ошибка при обновлении. Попробуйте позже.');
+                } catch (replyError) {
+                    console.error('Ошибка при отправке сообщения об ошибке:', replyError);
+                }
+            }
             return ctx.scene.leave();
         }
     }

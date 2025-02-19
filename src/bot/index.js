@@ -369,15 +369,59 @@ bot.action(/^final_vote_(\d+)_(\d+)$/, async (ctx) => {
     }
 });
 
+// Обработка изменений статуса бота в чате
 bot.on('my_chat_member', async (ctx) => {
     try {
-        if (ctx.update.my_chat_member.new_chat_member.status === 'kicked') {
-            const userId = ctx.update.my_chat_member.from.id;
+        const userId = ctx.update.my_chat_member.from.id;
+        const newStatus = ctx.update.my_chat_member.new_chat_member.status;
+        
+        if (newStatus === 'kicked') {
+            // Пользователь заблокировал бота
             await db.updateUserStatus(userId, false);
             console.log(`Пользователь ${userId} заблокировал бота`);
+        } else if (newStatus === 'member') {
+            // Пользователь разблокировал бота
+            await db.updateUserStatus(userId, true);
+            console.log(`Пользователь ${userId} разблокировал бота`);
+            
+            // Отправляем приветственное сообщение
+            try {
+                const user = await db.getUserProfile(userId);
+                if (user) {
+                    await ctx.telegram.sendMessage(
+                        userId, 
+                        'С возвращением! Рады видеть вас снова. Все функции бота снова доступны.',
+                        mainMenu
+                    );
+                } else {
+                    await ctx.telegram.sendMessage(
+                        userId,
+                        'Добро пожаловать! Для начала работы используйте команду /start',
+                        {
+                            reply_markup: {
+                                inline_keyboard: [[
+                                    { text: '🚀 Начать', callback_data: 'start' }
+                                ]]
+                            }
+                        }
+                    );
+                }
+            } catch (error) {
+                console.error(`Ошибка отправки приветственного сообщения пользователю ${userId}:`, error);
+            }
         }
     } catch (error) {
-        console.error('Ошибка при обработке блокировки бота:', error);
+        console.error('Ошибка при обработке изменения статуса бота:', error);
+    }
+});
+
+// Обработчик для кнопки "Начать"
+bot.action('start', async (ctx) => {
+    try {
+        await ctx.answerCbQuery();
+        await commands.startCommand(ctx);
+    } catch (error) {
+        console.error('Ошибка при обработке кнопки start:', error);
     }
 });
 

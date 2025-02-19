@@ -965,7 +965,8 @@ const db = {
         try {
             await client.query(`
                 UPDATE users 
-                SET is_active = $1 
+                SET is_active = $1,
+                    last_status_change = CURRENT_TIMESTAMP
                 WHERE user_id = $2
             `, [isActive, userId]);
         } catch (error) {
