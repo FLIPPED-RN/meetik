@@ -93,16 +93,24 @@ const checkSubscription = async (ctx, next) => {
             ]
         };
 
-        // Если это callback query, отвечаем через answerCbQuery
-        if (ctx.callbackQuery) {
-            await ctx.answerCbQuery('Необходимо подписаться на канал', { show_alert: true });
+        try {
+            // Если это callback query, отвечаем через answerCbQuery
+            if (ctx.callbackQuery) {
+                await ctx.answerCbQuery();
+            }
+        } catch (error) {
+            console.log('Ошибка при ответе на callback query:', error.message);
         }
 
-        // Отправляем сообщение о необходимости подписки
-        await ctx.reply(
-            '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
-            { reply_markup: keyboard }
-        );
+        // Отправляем новое сообщение о необходимости подписки
+        try {
+            await ctx.reply(
+                '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
+                { reply_markup: keyboard }
+            );
+        } catch (error) {
+            console.error('Ошибка при отправке сообщения о подписке:', error);
+        }
         
         return; // Прерываем выполнение следующих middleware
         
@@ -116,10 +124,14 @@ const checkSubscription = async (ctx, next) => {
                 ]
             };
             
-            await ctx.reply(
-                '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
-                { reply_markup: keyboard }
-            );
+            try {
+                await ctx.reply(
+                    '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
+                    { reply_markup: keyboard }
+                );
+            } catch (error) {
+                console.error('Ошибка при отправке сообщения о подписке:', error);
+            }
             return;
         }
         return next();
