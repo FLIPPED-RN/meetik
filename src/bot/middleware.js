@@ -78,62 +78,86 @@ const checkSubscription = async (ctx, next) => {
         const userId = ctx.from?.id;
         if (!userId) return next();
 
-        const chatMember = await ctx.telegram.getChatMember('@meetik_info', userId);
-        
-        // Проверяем статус подписки
-        if (['creator', 'administrator', 'member'].includes(chatMember.status)) {
-            return next();
-        }
-
-        // Если пользователь не подписан, отправляем сообщение
-        const keyboard = {
-            inline_keyboard: [
-                [{ text: '📢 Подписаться на канал', url: 'https://t.me/meetik_info' }],
-                [{ text: '🔄 Проверить подписку', callback_data: 'check_subscription' }]
-            ]
-        };
-
         try {
-            // Если это callback query, отвечаем через answerCbQuery
-            if (ctx.callbackQuery) {
-                await ctx.answerCbQuery();
+            const chatMember = await ctx.telegram.getChatMember('@meetik_info', userId);
+            
+            // Проверяем статус подписки
+            if (['creator', 'administrator', 'member'].includes(chatMember.status)) {
+                return next();
             }
-        } catch (error) {
-            console.log('Ошибка при ответе на callback query:', error.message);
-        }
 
-        // Отправляем новое сообщение о необходимости подписки
-        try {
-            await ctx.reply(
-                '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
-                { reply_markup: keyboard }
-            );
-        } catch (error) {
-            console.error('Ошибка при отправке сообщения о подписке:', error);
-        }
-        
-        return; // Прерываем выполнение следующих middleware
-        
-    } catch (error) {
-        console.error('Ошибка при проверке подписки:', error);
-        if (error.message.includes('user not found')) {
+            // Если пользователь не подписан, отправляем сообщение
             const keyboard = {
                 inline_keyboard: [
                     [{ text: '📢 Подписаться на канал', url: 'https://t.me/meetik_info' }],
                     [{ text: '🔄 Проверить подписку', callback_data: 'check_subscription' }]
                 ]
             };
-            
+
             try {
+                // Если это callback query, отвечаем через answerCbQuery
+                if (ctx.callbackQuery) {
+                    await ctx.answerCbQuery();
+                }
+
+                // Отправляем новое сообщение о необходимости подписки
                 await ctx.reply(
                     '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
                     { reply_markup: keyboard }
                 );
             } catch (error) {
-                console.error('Ошибка при отправке сообщения о подписке:', error);
+                // Проверяем, не заблокировал ли пользователь бота
+                if (error.description?.includes('bot was blocked') || 
+                    error.message?.includes('bot was blocked') ||
+                    error.code === 403) {
+                    try {
+                        await db.updateUserStatus(userId, false);
+                        console.log(`Пользователь ${userId} заблокировал бота`);
+                    } catch (dbError) {
+                        console.error('Ошибка обновления статуса пользователя:', dbError);
+                    }
+                } else {
+                    console.error('Ошибка при отправке сообщения о подписке:', error);
+                }
             }
-            return;
+            
+            return; // Прерываем выполнение следующих middleware
+            
+        } catch (error) {
+            if (error.message.includes('user not found')) {
+                const keyboard = {
+                    inline_keyboard: [
+                        [{ text: '📢 Подписаться на канал', url: 'https://t.me/meetik_info' }],
+                        [{ text: '🔄 Проверить подписку', callback_data: 'check_subscription' }]
+                    ]
+                };
+                
+                try {
+                    await ctx.reply(
+                        '❗️ Для использования бота необходимо подписаться на наш канал @meetik_info',
+                        { reply_markup: keyboard }
+                    );
+                } catch (replyError) {
+                    // Проверяем, не заблокировал ли пользователь бота
+                    if (replyError.description?.includes('bot was blocked') || 
+                        replyError.message?.includes('bot was blocked') ||
+                        replyError.code === 403) {
+                        try {
+                            await db.updateUserStatus(userId, false);
+                            console.log(`Пользователь ${userId} заблокировал бота`);
+                        } catch (dbError) {
+                            console.error('Ошибка обновления статуса пользователя:', dbError);
+                        }
+                    } else {
+                        console.error('Ошибка при отправке сообщения о подписке:', replyError);
+                    }
+                }
+                return;
+            }
+            return next();
         }
+    } catch (error) {
+        console.error('Ошибка при проверке подписки:', error);
         return next();
     }
 };
