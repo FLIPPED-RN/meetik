@@ -212,8 +212,7 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
                 const caption = `👤 *${rating.name}*, ${rating.age} лет\n` +
                               `🌆 ${rating.city}\n` +
                               `⭐️ Оценка: ${rating.rating}/10\n` +
-                              `${rating.username ? `📱 @${rating.username}\n` : ''}` +
-                              `🕒 ${new Date(rating.rated_at).toLocaleDateString('ru-RU')}`;
+                              `${rating.username ? `📱 @${rating.username}\n` : ''}`;
 
                 const keyboard = {
                     inline_keyboard: [[
