@@ -15,6 +15,37 @@ bot.use(stage.middleware());
 bot.use(middleware.errorHandler);
 bot.use(middleware.rateLimit);
 
+// Добавляем глобальный обработчик ошибок
+bot.catch((error, ctx) => {
+    console.error(`Ошибка для update ${ctx.update.update_id}:`, error);
+    
+    // Проверяем блокировку бота
+    if (error.description?.includes('bot was blocked') || 
+        error.message?.includes('bot was blocked') ||
+        error.code === 403) {
+        try {
+            const userId = ctx.from?.id || ctx.update?.my_chat_member?.from?.id;
+            if (userId) {
+                db.updateUserStatus(userId, false)
+                    .catch(err => console.error('Ошибка обновления статуса пользователя:', err));
+                console.log(`Пользователь ${userId} заблокировал бота`);
+            }
+        } catch (e) {
+            console.error('Ошибка при обработке блокировки:', e);
+        }
+    }
+    
+    // Пытаемся ответить пользователю только если это не ошибка блокировки
+    if (!error.code === 403 && ctx.chat) {
+        try {
+            ctx.reply('Произошла ошибка. Пожалуйста, попробуйте еще раз или используйте /start')
+                .catch(err => console.error('Ошибка отправки сообщения об ошибке:', err));
+        } catch (e) {
+            console.error('Ошибка при попытке ответить на ошибку:', e);
+        }
+    }
+});
+
 // Регистрируем команду start до middleware проверки подписки
 bot.command('start', async (ctx, next) => {
     try {
@@ -369,49 +400,36 @@ bot.action(/^final_vote_(\d+)_(\d+)$/, async (ctx) => {
     }
 });
 
-// Обработка изменений статуса бота в чате
+// Улучшаем обработчик my_chat_member
 bot.on('my_chat_member', async (ctx) => {
     try {
+        if (!ctx.update?.my_chat_member) return;
+        
         const userId = ctx.update.my_chat_member.from.id;
         const newStatus = ctx.update.my_chat_member.new_chat_member.status;
         
         if (newStatus === 'kicked') {
-            // Пользователь заблокировал бота
             await db.updateUserStatus(userId, false);
             console.log(`Пользователь ${userId} заблокировал бота`);
         } else if (newStatus === 'member') {
-            // Пользователь разблокировал бота
             await db.updateUserStatus(userId, true);
             console.log(`Пользователь ${userId} разблокировал бота`);
             
-            // Отправляем приветственное сообщение
             try {
                 const user = await db.getUserProfile(userId);
                 if (user) {
                     await ctx.telegram.sendMessage(
                         userId, 
-                        'С возвращением! Рады видеть вас снова. Все функции бота снова доступны.',
+                        'С возвращением! Рады видеть вас снова.',
                         mainMenu
-                    );
-                } else {
-                    await ctx.telegram.sendMessage(
-                        userId,
-                        'Добро пожаловать! Для начала работы используйте команду /start',
-                        {
-                            reply_markup: {
-                                inline_keyboard: [[
-                                    { text: '🚀 Начать', callback_data: 'start' }
-                                ]]
-                            }
-                        }
-                    );
+                    ).catch(() => {});
                 }
             } catch (error) {
-                console.error(`Ошибка отправки приветственного сообщения пользователю ${userId}:`, error);
+                console.error(`Ошибка при обработке разблокировки для пользователя ${userId}:`, error);
             }
         }
     } catch (error) {
-        console.error('Ошибка при обработке изменения статуса бота:', error);
+        console.error('Ошибка при обработке my_chat_member:', error);
     }
 });
 

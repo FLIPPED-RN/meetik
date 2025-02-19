@@ -6,18 +6,39 @@ const db = require('../database');
 const registrationScene = new Scenes.WizardScene(
     'registration',
     async (ctx) => {
-        await ctx.reply('Добро пожаловать! Как вас зовут? (только буквы, 2-30 символов)');
-        return ctx.wizard.next();
+        try {
+            await ctx.reply('Добро пожаловать! Как вас зовут? (только буквы, 2-30 символов)')
+                .catch(error => console.error('Ошибка отправки приветствия:', error));
+            return ctx.wizard.next();
+        } catch (error) {
+            console.error('Ошибка в первом шаге регистрации:', error);
+            return ctx.scene.leave();
+        }
     },
     async (ctx) => {
-        const name = ctx.message.text.trim();
-        if (!validators.name(name)) {
-            await ctx.reply('Пожалуйста, введите корректное имя (только буквы, 2-30 символов)');
-            return;
+        try {
+            // Проверяем наличие текстового сообщения
+            if (!ctx.message?.text) {
+                await ctx.reply('Пожалуйста, введите ваше имя текстом')
+                    .catch(error => console.error('Ошибка отправки запроса имени:', error));
+                return;
+            }
+
+            const name = ctx.message.text.trim();
+            if (!validators.name(name)) {
+                await ctx.reply('Пожалуйста, введите корректное имя (только буквы, 2-30 символов)')
+                    .catch(error => console.error('Ошибка отправки валидации имени:', error));
+                return;
+            }
+            
+            ctx.wizard.state.name = name;
+            await ctx.reply('Сколько вам лет? (14-99)')
+                .catch(error => console.error('Ошибка отправки запроса возраста:', error));
+            return ctx.wizard.next();
+        } catch (error) {
+            console.error('Ошибка во втором шаге регистрации:', error);
+            return ctx.scene.leave();
         }
-        ctx.wizard.state.name = name;
-        await ctx.reply('Сколько вам лет? (14-99)');
-        return ctx.wizard.next();
     },
     async (ctx) => {
         const age = parseInt(ctx.message.text);
@@ -125,5 +146,17 @@ const registrationScene = new Scenes.WizardScene(
         }
     }
 );
+
+// Добавляем обработчик ошибок для сцены
+registrationScene.catch((error, ctx) => {
+    console.error('Ошибка в сцене регистрации:', error);
+    try {
+        ctx.reply('Произошла ошибка при регистрации. Пожалуйста, используйте /start для повторной попытки')
+            .catch(err => console.error('Ошибка отправки сообщения об ошибке:', err));
+    } catch (e) {
+        console.error('Ошибка при обработке ошибки регистрации:', e);
+    }
+    return ctx.scene.leave();
+});
 
 module.exports = registrationScene; 
