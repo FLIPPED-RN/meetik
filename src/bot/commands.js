@@ -173,9 +173,9 @@ exports.leadersCommand = async (ctx) => {
     }
 };
 
-const safeSendPhoto = async (bot, userId, photo, extra = {}) => {
+const safeSendPhoto = async (telegram, userId, photo, extra = {}) => {
     try {
-        await bot.telegram.sendPhoto(userId, photo, extra);
+        await telegram.sendPhoto(userId, photo, extra);
         return true;
     } catch (error) {
         if (error.description?.includes('bot was blocked') || 
@@ -580,12 +580,12 @@ exports.registerBotActions = (bot) => {
 
                 try {
                     if (photos && photos.length > 0) {
-                        await safeSendPhoto(ctx.telegram, targetId, photos[0], {
+                        await safeSendPhoto(bot.telegram, targetId, photos[0], {
                             caption: notificationText,
                             parse_mode: 'MarkdownV2'
                         });
                     } else {
-                        await safeSendMessage(ctx.telegram, targetId, notificationText, {
+                        await safeSendMessage(bot.telegram, targetId, notificationText, {
                             parse_mode: 'MarkdownV2'
                         });
                     }
