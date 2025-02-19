@@ -175,11 +175,12 @@ exports.leadersCommand = async (ctx) => {
 
 exports.whoRatedMeCommand = (bot) => async (ctx) => {
     try {
-        // Получаем все уникальные оценки один раз
-        const ratings = await db.getLastRatings(ctx.from.id);
+        // Получаем последние 10 уникальных оценок
+        const ratings = await db.getLastRatings(ctx.from.id, 10);
         const uniqueRatings = ratings.filter((rating, index, self) =>
             index === self.findIndex((r) => r.from_user_id === rating.from_user_id)
-        );
+        ).slice(0, 10); // Ограничиваем до 10 оценок
+        
         const totalRatings = uniqueRatings.length;
 
         if (totalRatings === 0) {
@@ -189,35 +190,21 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         const showRating = async (ctx, index) => {
             try {
                 const rating = uniqueRatings[index];
-                const raterProfile = await db.getUserProfile(rating.from_user_id);
-                const photos = await db.getUserPhotos(rating.from_user_id);
+                const photos = rating.photos || [];
 
-                const escapedUsername = raterProfile.username ? 
-                    raterProfile.username.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1') : '';
+                const caption = `👤 *${rating.name}*, ${rating.age} лет\n` +
+                              `🌆 ${rating.city}\n` +
+                              `⭐️ Оценка: ${rating.rating}/10\n` +
+                              `${rating.username ? `📱 @${rating.username}\n` : ''}` +
+                              `🕒 ${new Date(rating.rated_at).toLocaleDateString('ru-RU')}`;
 
                 const keyboard = {
-                    inline_keyboard: [
-                        [
-                            {
-                                text: '⬅️',
-                                callback_data: `rating_prev_${index}`
-                            },
-                            {
-                                text: `${index + 1}/${totalRatings}`,
-                                callback_data: 'rating_count'
-                            },
-                            {
-                                text: '➡️',
-                                callback_data: `rating_next_${index}`
-                            }
-                        ]
-                    ]
+                    inline_keyboard: [[
+                        { text: '⬅️', callback_data: `rating_prev_${index}` },
+                        { text: `${index + 1}/${totalRatings}`, callback_data: 'rating_count' },
+                        { text: '➡️', callback_data: `rating_next_${index}` }
+                    ]]
                 };
-
-                const caption = `👤 *${raterProfile.name}*, ${raterProfile.age} лет\n` +
-                              `🌆 ${raterProfile.city}\n` +
-                              `⭐️ Оценка: ${rating.rating}/10\n` +
-                              `${raterProfile.username && rating.rating >= 7 ? `📱 @${escapedUsername}\n` : ''}`;
 
                 if (ctx.callbackQuery) {
                     if (photos.length > 0) {
@@ -258,7 +245,7 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         // Показываем первую оценку
         await showRating(ctx, 0);
 
-        // Обработчики кнопок навигации используют тот же массив uniqueRatings
+        // Обработчики кнопок навигации
         bot.action(/rating_prev_(\d+)/, async (ctx) => {
             const index = parseInt(ctx.match[1]);
             const newIndex = index > 0 ? index - 1 : totalRatings - 1;
@@ -274,7 +261,7 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         });
 
         bot.action('rating_count', async (ctx) => {
-            await ctx.answerCbQuery();
+            await ctx.answerCbQuery(`Показано ${totalRatings} последних оценок`);
         });
 
     } catch (error) {
