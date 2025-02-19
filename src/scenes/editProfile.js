@@ -84,6 +84,8 @@ const editProfileScene = new Scenes.WizardScene(
         const editField = ctx.wizard.state.editField;
 
         try {
+            let updates = {}; // Создаем объект для хранения обновлений
+
             switch (editField) {
                 case 'edit_name':
                     const name = ctx.message.text.trim();
@@ -91,7 +93,7 @@ const editProfileScene = new Scenes.WizardScene(
                         await ctx.reply('Некорректное имя. Попробуйте еще раз:');
                         return;
                     }
-                    await db.updateUserField(ctx.from.id, 'name', name);
+                    updates.name = name;
                     break;
 
                 case 'edit_age':
@@ -99,7 +101,7 @@ const editProfileScene = new Scenes.WizardScene(
                         await ctx.reply('Некорректный возраст. Попробуйте еще раз:');
                         return;
                     }
-                    await db.updateUserField(ctx.from.id, 'age', parseInt(ctx.message.text));
+                    updates.age = parseInt(ctx.message.text);
                     break;
 
                 case 'edit_city':
@@ -108,7 +110,7 @@ const editProfileScene = new Scenes.WizardScene(
                         await ctx.reply('Некорректное название города. Попробуйте еще раз:');
                         return;
                     }
-                    await db.updateUserField(ctx.from.id, 'city', city);
+                    updates.city = city;
                     break;
 
                 case 'edit_gender':
@@ -116,9 +118,8 @@ const editProfileScene = new Scenes.WizardScene(
                         await ctx.reply('Пожалуйста, выберите пол, используя кнопки выше');
                         return;
                     }
-                    const gender = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
+                    updates.gender = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
                                    ctx.callbackQuery.data === 'pref_female' ? 'female' : 'any';
-                    await db.updateUserField(ctx.from.id, 'gender', gender);
                     break;
 
                 case 'edit_preferences':
@@ -126,21 +127,20 @@ const editProfileScene = new Scenes.WizardScene(
                         await ctx.reply('Пожалуйста, выберите предпочтения, используя кнопки выше');
                         return;
                     }
-                    const preferences = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
+                    updates.preferences = ctx.callbackQuery.data === 'pref_male' ? 'male' : 
                                        ctx.callbackQuery.data === 'pref_female' ? 'female' : 'any';
-                    await db.updateUserField(ctx.from.id, 'preferences', preferences);
                     break;
 
                 case 'edit_description':
                     if (ctx.callbackQuery?.data === 'skip_description') {
-                        await db.updateUserField(ctx.from.id, 'description', '');
+                        updates.description = '';
                     } else {
                         const description = ctx.message.text.trim();
                         if (!validators.description(description)) {
                             await ctx.reply('Описание слишком длинное. Попробуйте еще раз:');
                             return;
                         }
-                        await db.updateUserField(ctx.from.id, 'description', description);
+                        updates.description = description;
                     }
                     break;
 
@@ -160,11 +160,13 @@ const editProfileScene = new Scenes.WizardScene(
                     await db.updateUserPhotos(ctx.from.id, ctx.wizard.state.photos);
                     await ctx.reply('Фотография обновлена!', mainMenu);
                     return ctx.scene.leave();
-                    break;
             }
 
-            await db.updateUserProfile(ctx.from.id, updates);
-            await ctx.reply('Изменения сохранены!', mainMenu);
+            // Проверяем, есть ли что обновлять
+            if (Object.keys(updates).length > 0) {
+                await db.updateUserProfile(ctx.from.id, updates);
+                await ctx.reply('Изменения сохранены!', mainMenu);
+            }
             return ctx.scene.leave();
         } catch (error) {
             console.error('Ошибка при обновлении профиля:', error);
