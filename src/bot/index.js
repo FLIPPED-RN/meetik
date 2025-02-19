@@ -369,6 +369,35 @@ bot.action(/^final_vote_(\d+)_(\d+)$/, async (ctx) => {
     }
 });
 
+bot.on('my_chat_member', async (ctx) => {
+    try {
+        if (ctx.update.my_chat_member.new_chat_member.status === 'kicked') {
+            const userId = ctx.update.my_chat_member.from.id;
+            await db.updateUserStatus(userId, false);
+            console.log(`Пользователь ${userId} заблокировал бота`);
+        }
+    } catch (error) {
+        console.error('Ошибка при обработке блокировки бота:', error);
+    }
+});
+
+const safeSendMessage = async (bot, userId, message, extra = {}) => {
+    try {
+        await bot.telegram.sendMessage(userId, message, extra);
+        return true;
+    } catch (error) {
+        if (error.description?.includes('bot was blocked') || 
+            error.message?.includes('bot was blocked') ||
+            error.code === 403) {
+            await db.updateUserStatus(userId, false);
+            console.log(`Не удалось отправить сообщение пользователю ${userId} (бот заблокирован)`);
+        } else {
+            console.error(`Ошибка отправки сообщения пользователю ${userId}:`, error);
+        }
+        return false;
+    }
+};
+
 module.exports = {
     bot,
     startBot

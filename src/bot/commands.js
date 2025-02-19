@@ -173,6 +173,23 @@ exports.leadersCommand = async (ctx) => {
     }
 };
 
+const safeSendPhoto = async (bot, userId, photo, extra = {}) => {
+    try {
+        await bot.telegram.sendPhoto(userId, photo, extra);
+        return true;
+    } catch (error) {
+        if (error.description?.includes('bot was blocked') || 
+            error.message?.includes('bot was blocked') ||
+            error.code === 403) {
+            await db.updateUserStatus(userId, false);
+            console.log(`Не удалось отправить фото пользователю ${userId} (бот заблокирован)`);
+        } else {
+            console.error(`Ошибка отправки фото пользователю ${userId}:`, error);
+        }
+        return false;
+    }
+};
+
 exports.whoRatedMeCommand = (bot) => async (ctx) => {
     try {
         // Получаем последние 10 уникальных оценок
@@ -563,17 +580,17 @@ exports.registerBotActions = (bot) => {
 
                 try {
                     if (photos && photos.length > 0) {
-                        await ctx.telegram.sendPhoto(targetId, photos[0], {
+                        await safeSendPhoto(ctx.telegram, targetId, photos[0], {
                             caption: notificationText,
                             parse_mode: 'MarkdownV2'
                         });
                     } else {
-                        await ctx.telegram.sendMessage(targetId, notificationText, {
+                        await safeSendMessage(ctx.telegram, targetId, notificationText, {
                             parse_mode: 'MarkdownV2'
                         });
                     }
                 } catch (error) {
-                    console.error('Ошибка отправки уведомления:', error);
+                    console.log(`Не удалось отправить уведомление пользователю ${targetId}`);
                 }
             }
 
@@ -586,7 +603,7 @@ exports.registerBotActions = (bot) => {
             }
         } catch (error) {
             console.error('Ошибка при сохранении оценки:', error);
-            await ctx.answerCbQuery('Произошла ошибка при сохранении оценки');
+            await ctx.answerCbQuery('Произошла ошибка при сохранении оценки').catch(() => {});
         }
     });
 
