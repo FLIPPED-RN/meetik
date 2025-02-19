@@ -410,32 +410,22 @@ const db = {
 
             const query = `
                 WITH RankedProfiles AS (
-                    SELECT DISTINCT ON (u.user_id)
+                    SELECT 
                         u.*,
-                        array_agg(p.photo_id) as photos,
+                        COALESCE(array_agg(p.photo_id) FILTER (WHERE p.photo_id IS NOT NULL), ARRAY[]::text[]) as photos,
                         random() as rand
                     FROM users u
                     LEFT JOIN photos p ON p.user_id = u.user_id
                     WHERE u.user_id != $1
                     AND ${genderCondition}
-                    AND u.age >= $3  -- Минимальный возраст
-                    AND u.age <= $4  -- Максимальный возраст
+                    AND u.age BETWEEN $3 AND $4
                     AND NOT EXISTS (
-                        SELECT 1 
-                        FROM ratings r 
-                        WHERE r.to_user_id = u.user_id 
-                        AND r.from_user_id = $1
-                        AND r.created_at > NOW() - INTERVAL '1 hour'
+                        SELECT 1 FROM ratings r 
+                        WHERE r.from_user_id = $1 AND r.to_user_id = u.user_id
                     )
                     GROUP BY u.user_id
                 )
-                SELECT 
-                    user_id, name, age, city, gender, 
-                    preferences, description, username, 
-                    coins, average_rating, last_win_time,
-                    created_at, in_global_rating, 
-                    last_global_win, global_rating_sum,
-                    photos
+                SELECT *
                 FROM RankedProfiles
                 ORDER BY rand
                 LIMIT 1
@@ -449,6 +439,7 @@ const db = {
                 : [userId, userPreferences, minAge, maxAge];
 
             const result = await client.query(query, params);
+
             return {
                 rows: result.rows,
                 message: result.rows.length === 0 ? 'Нет доступных анкет для оценки' : null
