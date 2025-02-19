@@ -178,7 +178,7 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         // Получаем последние 10 уникальных оценок
         const ratings = await db.getLastRatings(ctx.from.id, 10);
         const uniqueRatings = ratings.filter((rating, index, self) =>
-            index === self.findIndex((r) => r.from_user_id === rating.from_user_id)
+            index === self.findIndex((r) => r.from_user_id === rating.from_user_id) && rating.rating >= 7 // Фильтруем оценки от 7 до 10
         ).slice(0, 10); // Ограничиваем до 10 оценок
         
         const totalRatings = uniqueRatings.length;

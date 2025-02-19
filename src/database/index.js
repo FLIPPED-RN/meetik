@@ -403,12 +403,8 @@ const db = {
             const userPreferences = userPrefs.rows[0].preferences;
             const userAge = userPrefs.rows[0].age;
             
-            // Формируем условие для пола на основе предпочтений
-            const genderCondition = userPreferences === 'any' 
-                ? 'TRUE' 
-                : 'gender = $2';
-
-            const query = `
+            // Формируем базовый запрос
+            let query = `
                 WITH RankedProfiles AS (
                     SELECT 
                         u.*,
@@ -417,8 +413,21 @@ const db = {
                     FROM users u
                     LEFT JOIN photos p ON p.user_id = u.user_id
                     WHERE u.user_id != $1
-                    AND ${genderCondition}
-                    AND u.age BETWEEN $3 AND $4
+                    AND u.age BETWEEN $2 AND $3
+            `;
+
+            const params = [userId];
+            params.push(Math.max(16, userAge - 2)); // minAge
+            params.push(userAge + 2); // maxAge
+
+            // Добавляем условие для пола, если есть предпочтения
+            if (userPreferences && userPreferences !== 'any') {
+                query += ` AND u.gender = $4`;
+                params.push(userPreferences);
+            }
+
+            // Завершаем запрос
+            query += `
                     AND NOT EXISTS (
                         SELECT 1 FROM ratings r 
                         WHERE r.from_user_id = $1 AND r.to_user_id = u.user_id
@@ -430,13 +439,6 @@ const db = {
                 ORDER BY rand
                 LIMIT 1
             `;
-
-            const minAge = Math.max(16, userAge - 2); // Не меньше 16 лет
-            const maxAge = userAge + 2;
-
-            const params = userPreferences === 'any' 
-                ? [userId, minAge, maxAge] 
-                : [userId, userPreferences, minAge, maxAge];
 
             const result = await client.query(query, params);
 
