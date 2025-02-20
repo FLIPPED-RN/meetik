@@ -195,8 +195,8 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         // Получаем последние 10 уникальных оценок
         const ratings = await db.getLastRatings(ctx.from.id, 10);
         const uniqueRatings = ratings.filter((rating, index, self) =>
-            index === self.findIndex((r) => r.from_user_id === rating.from_user_id) && rating.rating >= 7 // Фильтруем оценки от 7 до 10
-        ).slice(0, 10); // Ограничиваем до 10 оценок
+            index === self.findIndex((r) => r.from_user_id === rating.from_user_id) && rating.rating >= 7
+        );
         
         const totalRatings = uniqueRatings.length;
 
@@ -204,9 +204,13 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
             return await ctx.reply('У вас пока нет оценок 😔');
         }
 
+        // Сохраняем рейтинги в контексте сессии
+        ctx.session.ratings = uniqueRatings;
+        ctx.session.totalRatings = totalRatings;
+
         const showRating = async (ctx, index) => {
             try {
-                const rating = uniqueRatings[index];
+                const rating = ctx.session.ratings[index];
                 const photos = rating.photos || [];
 
                 const caption = `👤 *${rating.name}*, ${rating.age} лет\n` +
@@ -216,9 +220,9 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
 
                 const keyboard = {
                     inline_keyboard: [[
-                        { text: '⬅️', callback_data: `rating_prev_${index}` },
-                        { text: `${index + 1}/${totalRatings}`, callback_data: 'rating_count' },
-                        { text: '➡️', callback_data: `rating_next_${index}` }
+                        { text: '⬅️', callback_data: `who_rated_prev_${index}` },
+                        { text: `${index + 1}/${ctx.session.totalRatings}`, callback_data: 'who_rated_count' },
+                        { text: '➡️', callback_data: `who_rated_next_${index}` }
                     ]]
                 };
 
@@ -251,34 +255,34 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
                     }
                 }
             } catch (error) {
-                if (!error.message.includes('message is not modified')) {
-                    console.error('Ошибка при показе рейтинга:', error);
-                    await ctx.reply('Произошла ошибка при показе рейтинга.');
-                }
+                console.error('Ошибка при показе рейтинга:', error);
+                await ctx.reply('Произошла ошибка при показе рейтинга.');
             }
         };
 
         // Показываем первую оценку
         await showRating(ctx, 0);
 
-        // Обработчики кнопок навигации
-        bot.action(/rating_prev_(\d+)/, async (ctx) => {
-            const index = parseInt(ctx.match[1]);
-            const newIndex = index > 0 ? index - 1 : totalRatings - 1;
-            await ctx.answerCbQuery();
-            await showRating(ctx, newIndex);
-        });
+        // Регистрируем обработчики только один раз
+        if (!bot.hasAction('who_rated_prev')) {
+            bot.action(/who_rated_prev_(\d+)/, async (ctx) => {
+                const index = parseInt(ctx.match[1]);
+                const newIndex = index > 0 ? index - 1 : ctx.session.totalRatings - 1;
+                await ctx.answerCbQuery();
+                await showRating(ctx, newIndex);
+            });
 
-        bot.action(/rating_next_(\d+)/, async (ctx) => {
-            const index = parseInt(ctx.match[1]);
-            const newIndex = index < totalRatings - 1 ? index + 1 : 0;
-            await ctx.answerCbQuery();
-            await showRating(ctx, newIndex);
-        });
+            bot.action(/who_rated_next_(\d+)/, async (ctx) => {
+                const index = parseInt(ctx.match[1]);
+                const newIndex = index < ctx.session.totalRatings - 1 ? index + 1 : 0;
+                await ctx.answerCbQuery();
+                await showRating(ctx, newIndex);
+            });
 
-        bot.action('rating_count', async (ctx) => {
-            await ctx.answerCbQuery(`Показано ${totalRatings} последних оценок`);
-        });
+            bot.action('who_rated_count', async (ctx) => {
+                await ctx.answerCbQuery(`Показано ${ctx.session.totalRatings} последних оценок`);
+            });
+        }
 
     } catch (error) {
         console.error('Ошибка при получении оценок:', error);
