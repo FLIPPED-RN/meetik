@@ -205,6 +205,7 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         }
 
         // Сохраняем рейтинги в контексте сессии
+        if (!ctx.session) ctx.session = {};
         ctx.session.ratings = uniqueRatings;
         ctx.session.totalRatings = totalRatings;
 
@@ -227,18 +228,24 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
                 };
 
                 if (ctx.callbackQuery) {
-                    if (photos.length > 0) {
-                        await ctx.editMessageMedia({
-                            type: 'photo',
-                            media: photos[0],
-                            caption: caption,
-                            parse_mode: 'Markdown'
-                        }, { reply_markup: keyboard });
-                    } else {
-                        await ctx.editMessageText(caption, {
-                            parse_mode: 'Markdown',
-                            reply_markup: keyboard
-                        });
+                    try {
+                        if (photos.length > 0) {
+                            await ctx.editMessageMedia({
+                                type: 'photo',
+                                media: photos[0],
+                                caption: caption,
+                                parse_mode: 'Markdown'
+                            }, { reply_markup: keyboard });
+                        } else {
+                            await ctx.editMessageText(caption, {
+                                parse_mode: 'Markdown',
+                                reply_markup: keyboard
+                            });
+                        }
+                    } catch (e) {
+                        if (!e.message.includes('message is not modified')) {
+                            throw e;
+                        }
                     }
                 } else {
                     if (photos.length > 0) {
@@ -263,26 +270,51 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
         // Показываем первую оценку
         await showRating(ctx, 0);
 
-        // Регистрируем обработчики только один раз
-        if (!bot.hasAction('who_rated_prev')) {
-            bot.action(/who_rated_prev_(\d+)/, async (ctx) => {
+        // Регистрируем обработчики действий
+        bot.action(/who_rated_prev_(\d+)/, async (ctx) => {
+            try {
+                if (!ctx.session?.ratings) {
+                    await ctx.answerCbQuery('Сессия истекла. Пожалуйста, запустите команду заново.');
+                    return;
+                }
                 const index = parseInt(ctx.match[1]);
                 const newIndex = index > 0 ? index - 1 : ctx.session.totalRatings - 1;
                 await ctx.answerCbQuery();
                 await showRating(ctx, newIndex);
-            });
+            } catch (error) {
+                console.error('Ошибка при навигации:', error);
+                await ctx.answerCbQuery('Произошла ошибка');
+            }
+        });
 
-            bot.action(/who_rated_next_(\d+)/, async (ctx) => {
+        bot.action(/who_rated_next_(\d+)/, async (ctx) => {
+            try {
+                if (!ctx.session?.ratings) {
+                    await ctx.answerCbQuery('Сессия истекла. Пожалуйста, запустите команду заново.');
+                    return;
+                }
                 const index = parseInt(ctx.match[1]);
                 const newIndex = index < ctx.session.totalRatings - 1 ? index + 1 : 0;
                 await ctx.answerCbQuery();
                 await showRating(ctx, newIndex);
-            });
+            } catch (error) {
+                console.error('Ошибка при навигации:', error);
+                await ctx.answerCbQuery('Произошла ошибка');
+            }
+        });
 
-            bot.action('who_rated_count', async (ctx) => {
+        bot.action('who_rated_count', async (ctx) => {
+            try {
+                if (!ctx.session?.ratings) {
+                    await ctx.answerCbQuery('Сессия истекла. Пожалуйста, запустите команду заново.');
+                    return;
+                }
                 await ctx.answerCbQuery(`Показано ${ctx.session.totalRatings} последних оценок`);
-            });
-        }
+            } catch (error) {
+                console.error('Ошибка при показе количества:', error);
+                await ctx.answerCbQuery('Произошла ошибка');
+            }
+        });
 
     } catch (error) {
         console.error('Ошибка при получении оценок:', error);
