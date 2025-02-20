@@ -192,7 +192,6 @@ const safeSendPhoto = async (telegram, userId, photo, extra = {}) => {
 
 exports.whoRatedMeCommand = (bot) => async (ctx) => {
     try {
-        // Получаем последние 10 уникальных оценок
         const ratings = await db.getLastRatings(ctx.from.id, 10);
         const uniqueRatings = ratings.filter((rating, index, self) =>
             index === self.findIndex((r) => r.from_user_id === rating.from_user_id) && rating.rating >= 7
@@ -204,20 +203,24 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
             return await ctx.reply('У вас пока нет оценок 😔');
         }
 
-        // Сохраняем рейтинги в контексте сессии
         if (!ctx.session) ctx.session = {};
         ctx.session.ratings = uniqueRatings;
         ctx.session.totalRatings = totalRatings;
+
+        const escapeMarkdown = (text) => {
+            if (!text) return '';
+            return text.replace(/([_*\[\]()~`>#+=|{}.!-])/g, '\\$1');
+        };
 
         const showRating = async (ctx, index) => {
             try {
                 const rating = ctx.session.ratings[index];
                 const photos = rating.photos || [];
 
-                const caption = `👤 *${rating.name}*, ${rating.age} лет\n` +
-                              `🌆 ${rating.city}\n` +
+                const caption = `👤 *${escapeMarkdown(rating.name)}*, ${rating.age} лет\n` +
+                              `🌆 ${escapeMarkdown(rating.city)}\n` +
                               `⭐️ Оценка: ${rating.rating}/10\n` +
-                              `${rating.username ? `📱 @${rating.username}\n` : ''}`;
+                              `${rating.username ? `📱 @${escapeMarkdown(rating.username)}\n` : ''}`;
 
                 const keyboard = {
                     inline_keyboard: [[
@@ -234,11 +237,11 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
                                 type: 'photo',
                                 media: photos[0],
                                 caption: caption,
-                                parse_mode: 'Markdown'
+                                parse_mode: 'MarkdownV2'
                             }, { reply_markup: keyboard });
                         } else {
                             await ctx.editMessageText(caption, {
-                                parse_mode: 'Markdown',
+                                parse_mode: 'MarkdownV2',
                                 reply_markup: keyboard
                             });
                         }
@@ -251,12 +254,12 @@ exports.whoRatedMeCommand = (bot) => async (ctx) => {
                     if (photos.length > 0) {
                         await ctx.replyWithPhoto(photos[0], {
                             caption: caption,
-                            parse_mode: 'Markdown',
+                            parse_mode: 'MarkdownV2',
                             reply_markup: keyboard
                         });
                     } else {
                         await ctx.reply(caption, {
-                            parse_mode: 'Markdown',
+                            parse_mode: 'MarkdownV2',
                             reply_markup: keyboard
                         });
                     }
