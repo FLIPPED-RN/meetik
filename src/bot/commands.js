@@ -181,7 +181,12 @@ const safeSendPhoto = async (telegram, userId, photo, extra = {}) => {
         if (error.description?.includes('bot was blocked') || 
             error.message?.includes('bot was blocked') ||
             error.code === 403) {
-            await db.updateUserStatus(userId, false);
+            try {
+                await db.updateUserStatus(userId, false);
+            } catch (dbError) {
+                console.error('Ошибка обновления статуса пользователя:', dbError);
+                // Продолжаем выполнение даже при ошибке обновления статуса
+            }
             console.log(`Не удалось отправить фото пользователю ${userId} (бот заблокирован)`);
         } else {
             console.error(`Ошибка отправки фото пользователю ${userId}:`, error);

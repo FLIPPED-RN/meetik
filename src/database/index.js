@@ -403,7 +403,7 @@ const db = {
             const userPreferences = userPrefs.rows[0].preferences;
             const userAge = userPrefs.rows[0].age;
             
-            // Формируем базовый запрос
+            // Формируем базовый запрос с учетом часового ограничения
             let query = `
                 WITH RankedProfiles AS (
                     SELECT 
@@ -414,7 +414,14 @@ const db = {
                     LEFT JOIN photos p ON p.user_id = u.user_id
                     WHERE u.user_id != $1
                     AND u.age BETWEEN $2 AND $3
-            `;
+                    AND NOT EXISTS (
+                        SELECT 1 
+                        FROM ratings r 
+                        WHERE r.from_user_id = $1 
+                        AND r.to_user_id = u.user_id
+                        AND r.created_at > NOW() - INTERVAL '1 hour'
+                    )
+                `;
 
             const params = [userId];
             params.push(Math.max(16, userAge - 2)); // minAge
@@ -428,10 +435,6 @@ const db = {
 
             // Завершаем запрос
             query += `
-                    AND NOT EXISTS (
-                        SELECT 1 FROM ratings r 
-                        WHERE r.from_user_id = $1 AND r.to_user_id = u.user_id
-                    )
                     GROUP BY u.user_id
                 )
                 SELECT *
@@ -965,11 +968,13 @@ const db = {
         try {
             await client.query(`
                 UPDATE users 
-                SET is_active = $1,
-                    last_status_change = CURRENT_TIMESTAMP
+                SET is_active = $1
                 WHERE user_id = $2
             `, [isActive, userId]);
+            
+            await client.query('COMMIT');
         } catch (error) {
+            await client.query('ROLLBACK');
             console.error('Ошибка обновления статуса пользователя:', error);
             throw error;
         } finally {
